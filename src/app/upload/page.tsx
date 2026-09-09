@@ -9,6 +9,7 @@
 
 import { useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import { MAX_UPLOAD_FILES, validateImageFile } from "@/lib/uploads";
 
 export default function UploadPage() {
   const router = useRouter();
@@ -32,9 +33,15 @@ export default function UploadPage() {
 
   const addFiles = useCallback(
     (incoming: FileList | File[]) => {
-      const imgs = Array.from(incoming).filter((f) => f.type.startsWith("image/"));
+      const incomingFiles = Array.from(incoming);
+      const invalid = incomingFiles.map(validateImageFile).filter((message): message is string => Boolean(message));
+      if (invalid.length) setError(invalid.slice(0, 2).join(". "));
+      const imgs = incomingFiles.filter((file) => !validateImageFile(file));
       setFiles((prev) => {
-        const next = [...prev, ...imgs];
+        const seen = new Set(prev.map((file) => `${file.name}:${file.size}:${file.lastModified}`));
+        const next = [...prev, ...imgs.filter((file) => !seen.has(`${file.name}:${file.size}:${file.lastModified}`))]
+          .slice(0, MAX_UPLOAD_FILES);
+        if (prev.length + imgs.length > MAX_UPLOAD_FILES) setError(`Upload up to ${MAX_UPLOAD_FILES} images at a time.`);
         refreshEstimate(next.length, mode);
         return next;
       });
@@ -64,37 +71,49 @@ export default function UploadPage() {
   };
 
   return (
-    <div className="max-w-2xl mx-auto">
-      <h1 className="text-2xl font-semibold mb-6">New Shipment Upload</h1>
+    <div className="max-w-5xl mx-auto">
+      <div className="mb-8">
+        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-amber-400 mb-3">New intake</p>
+        <h1 className="page-title">Create a shipment</h1>
+        <p className="page-intro mt-3">Name the batch, choose how it should run, then add clean photos of one part per frame.</p>
+      </div>
 
-      <label className="block text-sm text-zinc-400 mb-1">Shipment name</label>
+      <div className="grid lg:grid-cols-[minmax(0,1fr)_18rem] gap-6 items-start">
+        <div className="panel p-5 sm:p-7">
+      <label htmlFor="shipment-name" className="block text-sm text-zinc-300 mb-2">Shipment name</label>
       <input
+        id="shipment-name"
         value={name}
+        maxLength={120}
         onChange={(e) => setName(e.target.value)}
         placeholder={`Shipment ${new Date().toISOString().slice(0, 10)}`}
-        className="w-full mb-4 px-3 py-2 rounded-md bg-zinc-900 border border-zinc-700 focus:border-amber-500 outline-none"
+        className="field px-3.5 py-3 mb-6"
       />
 
-      <label className="block text-sm text-zinc-400 mb-1">Processing mode</label>
-      <div className="flex gap-3 mb-4">
+      <fieldset>
+      <legend className="block text-sm text-zinc-300 mb-2">Processing mode</legend>
+      <div className="grid sm:grid-cols-2 gap-3 mb-6">
         {(["batch", "express"] as const).map((m) => (
           <button
+            type="button"
             key={m}
             onClick={() => {
               setMode(m);
               refreshEstimate(files.length, m);
             }}
-            className={`flex-1 rounded-md border px-4 py-3 text-left ${
-              mode === m ? "border-amber-500 bg-amber-500/10" : "border-zinc-700 bg-zinc-900"
+            className={`rounded-xl border px-4 py-4 text-left ${
+              mode === m ? "border-amber-500/80 bg-amber-500/[0.08]" : "border-zinc-700 bg-zinc-900/40 hover:border-zinc-600"
             }`}
+            aria-pressed={mode === m}
           >
-            <div className="font-medium capitalize">{m}</div>
-            <div className="text-xs text-zinc-400">
-              {m === "batch" ? "Batch API · 50% cheaper · results within 24h" : "Synchronous · full price · minutes"}
+            <div className="font-medium capitalize flex justify-between gap-3"><span>{m}</span><span className="text-xs text-zinc-500">{mode === m ? "Selected" : ""}</span></div>
+            <div className="text-xs text-zinc-400 mt-1.5 leading-relaxed">
+              {m === "batch" ? "Queue-friendly processing for larger folders." : "Prioritised processing for smaller urgent batches."}
             </div>
           </button>
         ))}
       </div>
+      </fieldset>
 
       <div
         onDragOver={(e) => {
@@ -107,12 +126,13 @@ export default function UploadPage() {
           setDragging(false);
           addFiles(e.dataTransfer.files);
         }}
-        className={`border-2 border-dashed rounded-lg p-10 text-center mb-4 transition-colors ${
-          dragging ? "border-amber-500 bg-amber-500/5" : "border-zinc-700"
+        className={`border border-dashed rounded-xl px-5 py-10 sm:py-14 text-center mb-4 transition-colors ${
+          dragging ? "border-amber-500 bg-amber-500/[0.06]" : "border-zinc-600 bg-zinc-950/30"
         }`}
       >
-        <p className="text-zinc-400 mb-3">Drag &amp; drop part photos, or</p>
-        <label className="inline-block px-4 py-2 rounded-md bg-zinc-800 hover:bg-zinc-700 cursor-pointer">
+        <div className="text-lg font-medium">Drop part photos here</div>
+        <p className="text-sm text-zinc-500 mt-1 mb-5">JPEG, PNG, WebP, AVIF, or TIFF. Up to 15 MB each.</p>
+        <label className="secondary-button px-4 py-2.5 cursor-pointer">
           Browse folder
           <input
             type="file"
@@ -124,7 +144,7 @@ export default function UploadPage() {
             onChange={(e) => e.target.files && addFiles(e.target.files)}
           />
         </label>
-        <label className="ml-3 inline-block px-4 py-2 rounded-md bg-zinc-800 hover:bg-zinc-700 cursor-pointer">
+        <label className="ml-2 secondary-button px-4 py-2.5 cursor-pointer">
           Browse files
           <input
             type="file"
@@ -137,14 +157,10 @@ export default function UploadPage() {
       </div>
 
       {files.length > 0 && (
-        <div className="mb-4 rounded-md border border-zinc-800 bg-zinc-900 p-4 flex items-center justify-between">
+        <div className="mb-4 rounded-xl border border-zinc-700 bg-zinc-900/60 p-4 flex items-center justify-between gap-4">
           <div>
-            <span className="font-medium">{files.length.toLocaleString()}</span> images queued
-            {estimate != null && (
-              <span className="ml-3 text-sm text-zinc-400">
-                Estimated AI cost: <span className="text-amber-400 font-medium">${estimate.toFixed(2)}</span> ({mode})
-              </span>
-            )}
+            <div><span className="font-medium">{files.length.toLocaleString()}</span> images ready</div>
+            <div className="text-xs text-zinc-500 mt-1">{(files.reduce((sum, file) => sum + file.size, 0) / 1024 / 1024).toFixed(1)} MB total</div>
           </div>
           <button
             onClick={() => {
@@ -158,15 +174,29 @@ export default function UploadPage() {
         </div>
       )}
 
-      {error && <div className="mb-4 text-sm text-red-400">{error}</div>}
+      {error && <div role="alert" className="mb-4 rounded-lg border border-red-900 bg-red-950/30 px-3 py-2.5 text-sm text-red-300">{error}</div>}
 
       <button
         onClick={submit}
         disabled={files.length === 0 || submitting}
-        className="w-full py-3 rounded-md bg-amber-500 text-zinc-950 font-semibold hover:bg-amber-400 disabled:opacity-40 disabled:cursor-not-allowed"
+        className="primary-button w-full py-3.5 disabled:opacity-40 disabled:cursor-not-allowed"
       >
-        {submitting ? "Uploading…" : "Queue Shipment"}
+        {submitting ? "Uploading..." : "Queue shipment"}
       </button>
+        </div>
+
+        <aside className="panel p-5 lg:sticky lg:top-24">
+          <h2 className="font-medium">Run summary</h2>
+          <dl className="mt-5 space-y-4 text-sm">
+            <div className="flex justify-between gap-4"><dt className="text-zinc-500">Images</dt><dd className="data-value">{files.length}</dd></div>
+            <div className="flex justify-between gap-4"><dt className="text-zinc-500">Mode</dt><dd className="capitalize">{mode}</dd></div>
+            <div className="flex justify-between gap-4"><dt className="text-zinc-500">AI estimate</dt><dd className="data-value text-amber-300">{estimate == null ? "$0.00" : `$${estimate.toFixed(2)}`}</dd></div>
+          </dl>
+          <div className="mt-5 pt-5 border-t border-zinc-800 text-xs text-zinc-500 leading-relaxed">
+            OpenRouter free models currently have no token charge. Account rate limits still apply.
+          </div>
+        </aside>
+      </div>
     </div>
   );
 }

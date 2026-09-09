@@ -31,7 +31,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       )
       .run(id);
   } else if (action === "approve_selected") {
-    const ids = Array.isArray(body.ids) ? body.ids.map(Number).filter(Number.isFinite) : [];
+    const ids = Array.isArray(body.ids) ? body.ids.map(Number).filter(Number.isFinite).slice(0, 500) : [];
     if (ids.length === 0) return NextResponse.json({ error: "No ids" }, { status: 400 });
     const placeholders = ids.map(() => "?").join(",");
     info = db
@@ -41,7 +41,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       )
       .run(id, ...ids);
   } else if (action === "reject") {
-    const ids = Array.isArray(body.ids) ? body.ids.map(Number).filter(Number.isFinite) : [];
+    const ids = Array.isArray(body.ids) ? body.ids.map(Number).filter(Number.isFinite).slice(0, 500) : [];
     if (ids.length === 0) return NextResponse.json({ error: "No ids" }, { status: 400 });
     const placeholders = ids.map(() => "?").join(",");
     info = db
@@ -51,7 +51,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       )
       .run(id, ...ids);
   } else if (action === "flag_rephoto") {
-    const ids = Array.isArray(body.ids) ? body.ids.map(Number).filter(Number.isFinite) : [];
+    const ids = Array.isArray(body.ids) ? body.ids.map(Number).filter(Number.isFinite).slice(0, 500) : [];
     if (ids.length === 0) return NextResponse.json({ error: "No ids" }, { status: 400 });
     const placeholders = ids.map(() => "?").join(",");
     info = db

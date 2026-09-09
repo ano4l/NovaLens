@@ -16,12 +16,13 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   const { id } = await params;
   const item = getDb().prepare("SELECT * FROM items WHERE id = ?").get(id) as Item | undefined;
   if (!item) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  const abs = path.join(UPLOAD_DIR, item.image_path);
+  const abs = path.resolve(UPLOAD_DIR, item.image_path);
   // STUDY: Path-traversal guard. image_path comes from our own DB, but defense
   // in depth says: never join a stored path and trust it. If the resolved path
   // isn't under UPLOAD_DIR, refuse. Exercise 8 in CASE_STUDY.md asks you to
   // spot what ELSE is missing here (hint: who is allowed to see which image?).
-  if (!abs.startsWith(UPLOAD_DIR) || !fs.existsSync(abs)) {
+  const uploadRoot = `${path.resolve(UPLOAD_DIR)}${path.sep}`;
+  if (!abs.startsWith(uploadRoot) || !fs.existsSync(abs)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
   const buf = fs.readFileSync(abs);

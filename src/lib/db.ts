@@ -77,11 +77,7 @@ function migrate(db: Database.Database) {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
-    // STUDY: These two indexes exist because of the two hot queries:
-    //   1. dashboard:   "all items for job X"               → idx_items_job
-    //   2. worker tick: "next due pending/escalated item"    → idx_items_pending
-    // Indexes are written FOR YOUR QUERIES, not for your tables. Read
-    // worker.ts's SELECT statements and match them to these columns.
+    -- These indexes serve the dashboard and worker queue hot paths.
     CREATE INDEX IF NOT EXISTS idx_items_job ON items(job_id, status);
     CREATE INDEX IF NOT EXISTS idx_items_pending ON items(status, next_retry_at);
 
@@ -126,14 +122,14 @@ function migrate(db: Database.Database) {
 // guardrail margins. Anything that changes with the outside world (vendor
 // pricing, model generations) belongs in config, not code.
 const DEFAULT_SETTINGS: Record<string, string> = {
-  tier1_model: "gemini-2.5-flash-lite",
-  tier2_model: "gemini-2.5-pro",
+  tier1_model: "dots-studio/dots-3-note-preview:free",
+  tier2_model: "openrouter/free",
   escalation_threshold: "0.8",
-  tier1_input_rate: "0.10",
-  tier1_output_rate: "0.40",
-  tier2_input_rate: "1.25",
-  tier2_output_rate: "10.00",
-  batch_discount: "0.5",
+  tier1_input_rate: "0",
+  tier1_output_rate: "0",
+  tier2_input_rate: "0",
+  tier2_output_rate: "0",
+  batch_discount: "0",
   est_input_tokens_per_image: "1105",
   est_output_tokens_per_image: "150",
   est_escalation_rate: "0.10",
@@ -146,5 +142,19 @@ function seedSettings(db: Database.Database) {
   const stmt = db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)");
   for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
     stmt.run(key, value);
+  }
+  db.prepare("UPDATE settings SET value = ? WHERE key = 'tier1_model' AND value = 'gemini-2.5-flash-lite'")
+    .run(DEFAULT_SETTINGS.tier1_model);
+  db.prepare("UPDATE settings SET value = ? WHERE key = 'tier2_model' AND value = 'gemini-2.5-pro'")
+    .run(DEFAULT_SETTINGS.tier2_model);
+  const legacyRates: Record<string, string> = {
+    tier1_input_rate: "0.10",
+    tier1_output_rate: "0.40",
+    tier2_input_rate: "1.25",
+    tier2_output_rate: "10.00",
+    batch_discount: "0.5",
+  };
+  for (const [key, oldValue] of Object.entries(legacyRates)) {
+    db.prepare("UPDATE settings SET value = '0' WHERE key = ? AND value = ?").run(key, oldValue);
   }
 }

@@ -17,9 +17,9 @@ export function callCostUSD(
   inputTokens: number,
   outputTokens: number
 ): number {
-  const inRate = numSetting(`tier${tier}_input_rate`, tier === 1 ? 0.1 : 1.25);
-  const outRate = numSetting(`tier${tier}_output_rate`, tier === 1 ? 0.4 : 10);
-  const discount = mode === "batch" ? numSetting("batch_discount", 0.5) : 0;
+  const inRate = Math.max(0, numSetting(`tier${tier}_input_rate`, 0));
+  const outRate = Math.max(0, numSetting(`tier${tier}_output_rate`, 0));
+  const discount = mode === "batch" ? Math.min(1, Math.max(0, numSetting("batch_discount", 0))) : 0;
   const raw = (inputTokens / 1_000_000) * inRate + (outputTokens / 1_000_000) * outRate;
   return raw * (1 - discount);
 }

@@ -27,8 +27,19 @@ let running = 0;
 export function startWorker() {
   if (started) return;
   started = true;
+  recoverInterruptedItems();
   setInterval(tick, POLL_MS).unref?.();
   console.log("[worker] started");
+}
+
+function recoverInterruptedItems() {
+  getDb().prepare(
+    `UPDATE items
+     SET status = CASE WHEN tier IS NULL THEN 'pending' ELSE 'escalated' END,
+         next_retry_at = 0,
+         updated_at = datetime('now')
+     WHERE status = 'processing'`
+  ).run();
 }
 
 // STUDY: The two SELECTs below form a PRIORITY: Tier-1 pending work is found
@@ -91,8 +102,8 @@ async function processItem(item: Item) {
   ensureJobProcessing(job.id);
 
   const { client } = getVisionClient({
-    tier1: getSetting("tier1_model") ?? "gemini-2.5-flash-lite",
-    tier2: getSetting("tier2_model") ?? "gemini-2.5-pro",
+    tier1: getSetting("tier1_model") ?? "dots-studio/dots-3-note-preview:free",
+    tier2: getSetting("tier2_model") ?? "openrouter/free",
     threshold: numSetting("escalation_threshold", 0.8),
   });
 

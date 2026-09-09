@@ -26,6 +26,21 @@ const EDITABLE_KEYS = new Set([
   "escalation_rate_alert_high",
 ]);
 
+const BOUNDS: Record<string, [number, number]> = {
+  escalation_threshold: [0, 1],
+  tier1_input_rate: [0, 1000],
+  tier1_output_rate: [0, 1000],
+  tier2_input_rate: [0, 1000],
+  tier2_output_rate: [0, 1000],
+  batch_discount: [0, 1],
+  est_input_tokens_per_image: [1, 1_000_000],
+  est_output_tokens_per_image: [1, 100_000],
+  est_escalation_rate: [0, 1],
+  guardrail_margin: [0, 10],
+  max_attempts: [1, 10],
+  escalation_rate_alert_high: [0, 1],
+};
+
 export async function GET() {
   return NextResponse.json({ settings: getSettings() });
 }
@@ -34,7 +49,20 @@ export async function PUT(req: NextRequest) {
   const body = (await req.json()) as Record<string, string>;
   const updates: Record<string, string> = {};
   for (const [k, v] of Object.entries(body)) {
-    if (EDITABLE_KEYS.has(k) && typeof v === "string") updates[k] = v;
+    if (!EDITABLE_KEYS.has(k) || typeof v !== "string") continue;
+    const cleanValue = v.trim();
+    if (k.endsWith("_model")) {
+      if (!/^[a-z0-9_.-]+\/[a-z0-9_.:-]+$/i.test(cleanValue)) {
+        return NextResponse.json({ error: `${k} is not a valid OpenRouter model ID` }, { status: 400 });
+      }
+    } else if (BOUNDS[k]) {
+      const value = Number(cleanValue);
+      const [min, max] = BOUNDS[k];
+      if (!Number.isFinite(value) || value < min || value > max) {
+        return NextResponse.json({ error: `${k} must be between ${min} and ${max}` }, { status: 400 });
+      }
+    }
+    updates[k] = cleanValue;
   }
   setSettings(updates);
   return NextResponse.json({ settings: getSettings() });

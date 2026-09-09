@@ -1,5 +1,7 @@
 node_modules
 .next
 .env*
+!.env.example
 data/
 *.log
+*.tsbuildinfo

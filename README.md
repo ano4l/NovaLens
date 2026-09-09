@@ -1,48 +1,53 @@
 # NovaLens
 
-AI-powered bulk auto-spares inventory tagging — upload a folder of part photos, get a manager-reviewable, export-ready catalog. Built on Google's Gemini API with a two-tier hybrid routing strategy for cost control.
+AI-assisted bulk auto-spares inventory tagging. Upload a folder of part photos and turn it into a manager-reviewable, export-ready catalog. NovaLens uses OpenRouter with two-tier vision routing so fast classifications stay cheap while uncertain items receive a stronger second pass.
+
+## Default model strategy
+
+- Tier 1: `dots-studio/dots-3-note-preview:free`, verified against NovaLens's structured automotive-tagging request with reasoning disabled.
+- Tier 2: `openrouter/free`, an availability-first escalation route that selects a compatible free vision model.
+- Alternatives: `google/gemma-4-26b-a4b-it:free` for faster multimodal throughput and `google/gemma-4-31b-it:free` for a denser quality pass when their free endpoints have capacity.
+
+Free-model availability and rate limits change. Recheck the [OpenRouter free models collection](https://openrouter.ai/collections/free-models) before a production launch.
 
 ## Architecture
 
-```
-[Bulk Upload] → [Local Storage] → [SQLite Queue] → [Tier 1: Flash-Lite worker]
-                                                        │ needs_review?
-                                                        ▼
-                                          [Tier 2: Pro escalation worker]
-                                                        ▼
-                        [Results DB] → [Review Dashboard] → [Export: Shopify / WooCommerce / CSV]
+```text
+[Bulk Upload] -> [Image Validation] -> [Local Storage] -> [SQLite Queue]
+                                                            |
+                                             [Tier 1 vision model]
+                                                            |
+                                                    needs_review?
+                                                            |
+                                             [Tier 2 vision model]
+                                                            |
+                     [Results DB] -> [Review Workspace] -> [CSV Exports]
 ```
 
-- **Upload & preprocess** — drag-and-drop folder upload; every image is resized to 1024px on the longest edge, auto-rotated, EXIF-stripped, and converted to JPEG (`src/lib/preprocess.ts`) before tagging.
-- **Queue & worker** — an in-process worker (`src/lib/worker.ts`, started via `src/instrumentation.ts`) polls the SQLite-backed item queue with per-image retry, exponential backoff, and a dead-letter state (`needs_manual`).
-- **Tier 1 (bulk)** — Gemini Flash-Lite with native structured output (`responseSchema`), returning brand / part_name / year range / condition notes / confidence / needs_review (`src/lib/vision.ts`).
-- **Tier 2 (escalation)** — items flagged `needs_review` are automatically re-run through Gemini Pro and marked with a Tier-2 badge in the dashboard.
-- **Batch vs Express** — batch mode applies the Batch API's 50% token discount to the cost model (default); express is full-price synchronous. The batch discount is modeled in `src/lib/cost.ts`; real Batch API file submission slots into the worker call site without changing callers.
-- **Cost guardrails** — every API call logs tokens + computed cost (`api_logs`). Pre-run estimate per job; post-run alert if actuals exceed estimate by the configurable margin, or if the escalation rate leaves the expected band.
-- **Review dashboard** — sortable table (lowest confidence first), confidence/tier badges, inline editing (with audit log), bulk approve by confidence, reject, flag-for-rephoto with corrected-image requeue.
-- **Exports** — one-click CSV in generic, Shopify-import, and WooCommerce-import formats.
-- **Admin** — all tunables (models, threshold, token rates, discount, guardrail margins) live in the `settings` table, editable at `/admin` with no deploy.
+- Upload and preprocessing: validates type, size, and batch count; rotates from EXIF; caps the longest edge at 1024 px; strips metadata; and converts images to JPEG.
+- Queue and worker: an in-process worker polls the SQLite queue with per-image retries, exponential backoff, interrupted-work recovery, and a `needs_manual` dead-letter state.
+- Provider boundary: `src/lib/vision.ts` owns the OpenRouter wire format. Routes, persistence, and UI depend only on the local `VisionClient` contract.
+- Human review: lowest-confidence items appear first, with inline edits, an edit audit log, bulk decisions, and corrected-photo requeue.
+- Guardrails: token usage and latency are logged for every call. Estimates and escalation-rate alerts remain configurable even when current model rates are zero.
+- Exports: approved items can be downloaded as generic, Shopify, or WooCommerce CSV files.
 
-## Run it
+## Run locally
 
 ```bash
 npm install
-cp .env.example .env   # add GEMINI_API_KEY for live calls; leave blank for mock mode
+Copy-Item .env.example .env
 npm run dev
 ```
 
-Open http://localhost:3000 — upload images at **New Upload**, review at the shipment's dashboard, approve, export.
+Add `OPENROUTER_API_KEY` to `.env` for live tagging, then open [http://localhost:3000](http://localhost:3000). Without a key, NovaLens uses synthetic mock tags so the complete review workflow remains testable offline.
 
-## Mock mode
+## Current production boundaries
 
-Without `GEMINI_API_KEY`, a mock vision client returns synthetic tags (with ~12% simulated low-confidence escalation) so the entire pipeline can be exercised offline.
-
-## PRD gap notes (v1 MVP → production)
-
-| PRD element | MVP state | Production path |
+| Area | Current implementation | Production path |
 |---|---|---|
-| GCS storage | Local disk behind `data/uploads` | Swap `preprocess.ts`/`images` route for GCS + signed URLs |
-| Cloud Tasks/Pub-Sub queue | SQLite-polled in-process worker | Move worker to Cloud Run pulling Pub/Sub messages |
-| Gemini Batch API (file-based) | Cost model applies 50% discount; calls are per-item | Submit batch files via `ai.batches.create`, poll, write results back |
-| Shopify/Woo live API export | Import-ready CSV formats | Add Admin/REST API push with stored credentials |
-| SQLite | Local dev DB | Postgres/Cloud SQL behind the same query layer |
+| Authentication | Trusted local workspace | Add organization accounts, roles, and job ownership checks |
+| Object storage | Local disk behind an authenticated-ready route boundary | Move images to private object storage and issue short-lived signed URLs |
+| Queue | SQLite-polled in-process worker | Move to a durable managed queue with separately deployed workers |
+| Database | SQLite | Move to Postgres with versioned migrations |
+| OpenRouter free models | Prototype and low-volume operation | Benchmark on a labelled parts set, then pin paid fallbacks and capacity |
+| Commerce delivery | Import-ready CSV | Add scoped Shopify and WooCommerce API integrations |

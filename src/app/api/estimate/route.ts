@@ -11,7 +11,8 @@ import { JobMode } from "@/lib/types";
 export const runtime = "nodejs";
 
 export async function GET(req: NextRequest) {
-  const count = Math.max(0, Number(req.nextUrl.searchParams.get("count") ?? 0));
+  const rawCount = Number(req.nextUrl.searchParams.get("count") ?? 0);
+  const count = Number.isFinite(rawCount) ? Math.min(100, Math.max(0, Math.floor(rawCount))) : 0;
   const mode = (req.nextUrl.searchParams.get("mode") === "express" ? "express" : "batch") as JobMode;
   return NextResponse.json({ count, mode, estCostUsd: estimateJobCostUSD(count, mode) });
 }
