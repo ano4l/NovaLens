@@ -39,9 +39,10 @@ export function getDb(): Database.Database {
   return globalForDb.__novalensDb;
 }
 
-// STUDY: "Migrate" here just means CREATE TABLE IF NOT EXISTS — fine for a
-// case study. Production apps use versioned migration files (drizzle, knex,
-// prisma migrate) so schema changes are replayable and reversible.
+// STUDY: CREATE TABLE handles new databases; ensureColumn carries older study
+// databases forward when a nullable feature column is introduced. Production
+// apps should still use numbered migrations so every change is replayable,
+// reviewable, and reversible.
 function migrate(db: Database.Database) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS jobs (
@@ -62,6 +63,8 @@ function migrate(db: Database.Database) {
       job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
       filename TEXT NOT NULL,
       image_path TEXT NOT NULL,
+      cutout_path TEXT,
+      background_status TEXT NOT NULL DEFAULT 'legacy',
       status TEXT NOT NULL DEFAULT 'pending',
       brand TEXT,
       part_name TEXT,
@@ -72,6 +75,7 @@ function migrate(db: Database.Database) {
       needs_review INTEGER NOT NULL DEFAULT 0,
       tier INTEGER,
       raw_json TEXT,
+      field_reviews TEXT,
       attempts INTEGER NOT NULL DEFAULT 0,
       next_retry_at INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -112,6 +116,19 @@ function migrate(db: Database.Database) {
       value TEXT NOT NULL
     );
   `);
+
+  ensureColumn(db, "items", "cutout_path", "TEXT");
+  ensureColumn(db, "items", "background_status", "TEXT NOT NULL DEFAULT 'legacy'");
+  ensureColumn(db, "items", "field_reviews", "TEXT");
+}
+
+function ensureColumn(db: Database.Database, table: string, column: string, definition: string) {
+  // STUDY: SQLite lacks ADD COLUMN IF NOT EXISTS. Inspecting table_info first
+  // makes this tiny forward migration idempotent across hot reloads and restarts.
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (!columns.some((item) => item.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
 }
 
 // STUDY: All values are strings in the settings table; callers parse numbers
@@ -122,8 +139,10 @@ function migrate(db: Database.Database) {
 // guardrail margins. Anything that changes with the outside world (vendor
 // pricing, model generations) belongs in config, not code.
 const DEFAULT_SETTINGS: Record<string, string> = {
-  tier1_model: "dots-studio/dots-3-note-preview:free",
-  tier2_model: "openrouter/free",
+  tier1_model: "qwen/qwen3-vl-235b-a22b-instruct",
+  tier2_model: "google/gemini-3.1-pro-preview",
+  challenger_model: "qwen/qwen3-vl-235b-a22b-thinking",
+  adjudicator_model: "openai/gpt-5.4-mini",
   escalation_threshold: "0.8",
   tier1_input_rate: "0",
   tier1_output_rate: "0",

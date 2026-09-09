@@ -2,11 +2,12 @@
 
 AI-assisted bulk auto-spares inventory tagging. Upload a folder of part photos and turn it into a manager-reviewable, export-ready catalog. NovaLens uses OpenRouter with two-tier vision routing so fast classifications stay cheap while uncertain items receive a stronger second pass.
 
-## Default model strategy
+## Recognition strategy
 
-- Tier 1: `dots-studio/dots-3-note-preview:free`, verified against NovaLens's structured automotive-tagging request with reasoning disabled.
-- Tier 2: `openrouter/free`, an availability-first escalation route that selects a compatible free vision model.
-- Alternatives: `google/gemma-4-26b-a4b-it:free` for faster multimodal throughput and `google/gemma-4-31b-it:free` for a denser quality pass when their free endpoints have capacity.
+- Routine pass: one configurable image model keeps throughput and cost under control.
+- Quality consensus: `google/gemini-3.1-pro-preview` and `qwen/qwen3-vl-235b-a22b-thinking` inspect independently; `openai/gpt-5.4-mini` adjudicates from the same image and both proposals.
+- Every field carries its own confidence, visible evidence, and review status. A reviewer can edit, confirm, or re-run only that field without overwriting trusted values.
+- Free prototype mode remains available through `dots-studio/dots-3-note-preview:free` and `openrouter/free`, but the random free router is not an accuracy benchmark.
 
 Free-model availability and rate limits change. Recheck the [OpenRouter free models collection](https://openrouter.ai/collections/free-models) before a production launch.
 
@@ -19,16 +20,16 @@ Free-model availability and rate limits change. Recheck the [OpenRouter free mod
                                                             |
                                                     needs_review?
                                                             |
-                                             [Tier 2 vision model]
+                                      [Two analysts + adjudicator]
                                                             |
                      [Results DB] -> [Review Workspace] -> [CSV Exports]
 ```
 
-- Upload and preprocessing: validates type, size, and batch count; rotates from EXIF; caps the longest edge at 1024 px; strips metadata; and converts images to JPEG.
+- Upload and preprocessing: validates type, size, and batch count; rotates from EXIF; caps the longest edge at 1024 px; strips metadata; removes the background when `REMOVE_BG_API_KEY` is configured; stores a transparent cutout; and creates a white-background JPEG for recognition and export.
 - Queue and worker: an in-process worker polls the SQLite queue with per-image retries, exponential backoff, interrupted-work recovery, and a `needs_manual` dead-letter state.
 - Provider boundary: `src/lib/vision.ts` owns the OpenRouter wire format. Routes, persistence, and UI depend only on the local `VisionClient` contract.
-- Human review: lowest-confidence items appear first, with inline edits, an edit audit log, bulk decisions, and corrected-photo requeue.
-- Guardrails: token usage and latency are logged for every call. Estimates and escalation-rate alerts remain configurable even when current model rates are zero.
+- Human review: lowest-confidence items appear first, with per-field evidence, inline edits, confirmation, targeted AI retries, an edit audit log, bulk decisions, and corrected-photo requeue.
+- Guardrails: token usage, exact OpenRouter response cost, and latency are logged for every call. Estimates and escalation-rate alerts remain configurable.
 - Exports: approved items can be downloaded as generic, Shopify, or WooCommerce CSV files.
 
 ## Run locally
@@ -39,7 +40,7 @@ Copy-Item .env.example .env
 npm run dev
 ```
 
-Add `OPENROUTER_API_KEY` to `.env` for live tagging, then open [http://localhost:3000](http://localhost:3000). Without a key, NovaLens uses synthetic mock tags so the complete review workflow remains testable offline.
+Add `OPENROUTER_API_KEY` to `.env` for live tagging. Add `REMOVE_BG_API_KEY` for transparent cutouts and clean white-background images. Without either key, the relevant workflow degrades visibly: recognition uses mock tags and uploads retain their photographed background on a white canvas.
 
 ## Current production boundaries
 

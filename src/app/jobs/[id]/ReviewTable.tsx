@@ -7,15 +7,17 @@
 // from there this component owns all interaction state (selection, editing,
 // polling).
 //
-// Three sub-systems to trace:
-//   1. editing state + <Cell>                → spreadsheet-like inline editing
-//   2. `selected` Set + bulk()               → checkbox selection & bulk actions
-//   3. <AutoRefresh>                         → polling while the job processes
+// Four sub-systems to trace:
+//   1. editing state + <Cell>     → spreadsheet-like inline editing
+//   2. field review actions       → confirm or re-run exactly one AI value
+//   3. `selected` Set + bulk()    → checkbox selection and bulk decisions
+//   4. <AutoRefresh>              → polling while the job processes
 // ============================================================================
 "use client";
 
 import { useState, useMemo, useRef, useEffect } from "react";
-import { Item } from "@/lib/types";
+import { FieldAssessment, Item, RecognitionField } from "@/lib/types";
+import { parseFieldAssessments } from "@/lib/recognition";
 
 const CONF_STYLE: Record<string, string> = {
   high: "border-emerald-800 text-emerald-300 bg-emerald-950/30",
@@ -44,6 +46,7 @@ export default function ReviewTable({
   const inspectorRef = useRef<HTMLElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [rechecking, setRechecking] = useState<{ id: number; field: RecognitionField } | null>(null);
 
   const visible = useMemo(() => {
     if (filter === "all") return items;
@@ -98,6 +101,32 @@ export default function ReviewTable({
     setEditing(null);
     const val = field === "year_start" || field === "year_end" ? (value === "" ? null : Number(value)) : value;
     await patchItem(id, { [field]: val });
+  };
+
+  const confirmField = async (id: number, field: RecognitionField) => {
+    await patchItem(id, { confirm_field: field });
+  };
+
+  const recheckField = async (id: number, field: RecognitionField) => {
+    // STUDY: The server returns the authoritative whole row, but the endpoint
+    // changes only the requested field. This avoids erasing a reviewer-approved
+    // brand when they ask AI to reconsider only the condition note.
+    setRechecking({ id, field });
+    setError(null);
+    try {
+      const response = await fetch(`/api/items/${id}/recognize`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ field }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error ?? "AI could not re-check this field");
+      setItems((current) => current.map((item) => item.id === id ? data.item : item));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "AI could not re-check this field");
+    } finally {
+      setRechecking(null);
+    }
   };
 
   // STUDY: Bulk actions refetch the WHOLE job afterward rather than patching
@@ -256,7 +285,7 @@ export default function ReviewTable({
             </div>
           </div>
           <div className="review-table-wrap">
-        <table className="w-full min-w-[960px] text-sm">
+        <table className="w-full min-w-[1180px] text-sm">
           <thead className="bg-zinc-900/90 text-zinc-500 text-left sticky top-16 z-10">
             <tr>
               <th className="px-3 py-2 w-8">
@@ -290,14 +319,14 @@ export default function ReviewTable({
                     {activeItem?.id === i.id && <span className="review-selected-mark">Selected</span>}
                   </button>
                 </td>
-                <Cell item={i} field="brand" editing={editing} setEditing={setEditing} commitEdit={commitEdit} editable={isEditable(i)} />
-                <Cell item={i} field="part_name" editing={editing} setEditing={setEditing} commitEdit={commitEdit} editable={isEditable(i)} wide />
+                <Cell item={i} field="brand" editing={editing} setEditing={setEditing} commitEdit={commitEdit} editable={isEditable(i)} onRecheck={recheckField} rechecking={rechecking} />
+                <Cell item={i} field="part_name" editing={editing} setEditing={setEditing} commitEdit={commitEdit} editable={isEditable(i)} onRecheck={recheckField} rechecking={rechecking} wide />
                 <td className="px-3 py-2 whitespace-nowrap">
-                  <Cell item={i} field="year_start" editing={editing} setEditing={setEditing} commitEdit={commitEdit} editable={isEditable(i)} inline />
+                  <Cell item={i} field="year_start" editing={editing} setEditing={setEditing} commitEdit={commitEdit} editable={isEditable(i)} onRecheck={recheckField} rechecking={rechecking} inline />
                   <span className="text-zinc-500">-</span>
-                  <Cell item={i} field="year_end" editing={editing} setEditing={setEditing} commitEdit={commitEdit} editable={isEditable(i)} inline />
+                  <Cell item={i} field="year_end" editing={editing} setEditing={setEditing} commitEdit={commitEdit} editable={isEditable(i)} onRecheck={recheckField} rechecking={rechecking} inline />
                 </td>
-                <Cell item={i} field="condition_notes" editing={editing} setEditing={setEditing} commitEdit={commitEdit} editable={isEditable(i)} wide />
+                <Cell item={i} field="condition_notes" editing={editing} setEditing={setEditing} commitEdit={commitEdit} editable={isEditable(i)} onRecheck={recheckField} rechecking={rechecking} wide />
                 <td className="px-3 py-2">
                   {i.confidence ? (
                     <span className={`inline-flex border text-xs px-2 py-0.5 rounded-full ${CONF_STYLE[i.confidence]}`}>
@@ -371,11 +400,17 @@ export default function ReviewTable({
                 <span>Open full image</span>
               </a>
               <div className="review-filename" title={activeItem.filename}>{activeItem.filename}</div>
+              <div className={`image-processing-state image-processing-${activeItem.background_status}`}>
+                <strong>{activeItem.background_status === "removed" ? "Background removed" : activeItem.background_status === "pending" ? "Preparing clean image" : activeItem.background_status === "not_configured" ? "White canvas ready" : activeItem.background_status === "failed" ? "Background removal needs retry" : "Legacy image"}</strong>
+                <span>{activeItem.background_status === "removed" ? "Transparent cutout and white-background image saved." : activeItem.background_status === "pending" ? "The queued worker will isolate this part before recognition." : activeItem.background_status === "not_configured" ? "Add the removal provider key to isolate future uploads." : "The recognition image remains available on white."}</span>
+                {activeItem.cutout_path && <a href={`/api/images/${activeItem.id}?variant=cutout`} target="_blank" rel="noreferrer">View transparent cutout</a>}
+              </div>
               <dl className="review-facts">
-                <InspectorField item={activeItem} field="brand" label="Brand" editing={editing} setEditing={setEditing} commitEdit={commitEdit} editable={isEditable(activeItem)} />
-                <InspectorField item={activeItem} field="part_name" label="Part" editing={editing} setEditing={setEditing} commitEdit={commitEdit} editable={isEditable(activeItem)} />
-                <Fact label="Years" value={activeItem.year_start || activeItem.year_end ? `${activeItem.year_start ?? "?"} – ${activeItem.year_end ?? "?"}` : null} />
-                <InspectorField item={activeItem} field="condition_notes" label="Condition" editing={editing} setEditing={setEditing} commitEdit={commitEdit} editable={isEditable(activeItem)} />
+                <InspectorField item={activeItem} field="brand" label="Brand" editing={editing} setEditing={setEditing} commitEdit={commitEdit} editable={isEditable(activeItem)} onConfirm={confirmField} onRecheck={recheckField} rechecking={rechecking} />
+                <InspectorField item={activeItem} field="part_name" label="Part" editing={editing} setEditing={setEditing} commitEdit={commitEdit} editable={isEditable(activeItem)} onConfirm={confirmField} onRecheck={recheckField} rechecking={rechecking} />
+                <InspectorField item={activeItem} field="year_start" label="From year" editing={editing} setEditing={setEditing} commitEdit={commitEdit} editable={isEditable(activeItem)} onConfirm={confirmField} onRecheck={recheckField} rechecking={rechecking} />
+                <InspectorField item={activeItem} field="year_end" label="To year" editing={editing} setEditing={setEditing} commitEdit={commitEdit} editable={isEditable(activeItem)} onConfirm={confirmField} onRecheck={recheckField} rechecking={rechecking} />
+                <InspectorField item={activeItem} field="condition_notes" label="Condition" editing={editing} setEditing={setEditing} commitEdit={commitEdit} editable={isEditable(activeItem)} onConfirm={confirmField} onRecheck={recheckField} rechecking={rechecking} />
                 <Fact label="Confidence" value={activeItem.confidence ? `${activeItem.confidence}${activeItem.needs_review === 1 ? " · review" : ""}` : null} />
               </dl>
               <div className="review-actions">
@@ -405,30 +440,46 @@ function Fact({ label, value }: { label: string; value: string | number | null |
 }
 
 function InspectorField({
-  item, field, label, editing, setEditing, commitEdit, editable,
+  item, field, label, editing, setEditing, commitEdit, editable, onConfirm, onRecheck, rechecking,
 }: {
   item: Item;
-  field: "brand" | "part_name" | "condition_notes";
+  field: RecognitionField;
   label: string;
   editing: { id: number; field: string; value: string } | null;
   setEditing: (e: { id: number; field: string; value: string } | null) => void;
   commitEdit: () => void;
   editable: boolean;
+  onConfirm: (id: number, field: RecognitionField) => Promise<void>;
+  onRecheck: (id: number, field: RecognitionField) => Promise<void>;
+  rechecking: { id: number; field: RecognitionField } | null;
 }) {
   const value = String(item[field] ?? "");
   const isEditing = editing?.id === item.id && editing.field === field;
+  const assessment = parseFieldAssessments(item.field_reviews)[field];
+  const isRechecking = rechecking?.id === item.id && rechecking.field === field;
   return (
-    <div>
-      <dt>{label}</dt>
+    <div className="review-field-block">
+      <dt><span>{label}</span><FieldState assessment={assessment} /></dt>
       <dd>
         {isEditing ? (
           <input autoFocus value={editing.value} onChange={(e) => setEditing({ id: item.id, field, value: e.target.value })} onBlur={commitEdit} onKeyDown={(e) => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") setEditing(null); }} className="review-inspector-input" aria-label={`${label} for ${item.filename}`} />
         ) : (
           <button type="button" disabled={!editable} onClick={() => setEditing({ id: item.id, field, value })} className="review-fact-value"><span>{value || <span className="text-zinc-600">Not set</span>}</span> {editable && <span className="review-edit-hint">Edit {label.toLowerCase()}</span>}</button>
         )}
+        {assessment?.evidence && <p className="field-evidence">{assessment.evidence}</p>}
+        <div className="field-actions">
+          <button type="button" disabled={!editable || isRechecking} onClick={() => onRecheck(item.id, field)}>{isRechecking ? "Checking..." : "Try AI again"}</button>
+          <button type="button" disabled={!editable || assessment?.status === "confirmed" || assessment?.status === "corrected"} onClick={() => onConfirm(item.id, field)}>{assessment?.status === "confirmed" ? "Confirmed" : assessment?.status === "corrected" ? "Corrected" : "Confirm field"}</button>
+        </div>
       </dd>
     </div>
   );
+}
+
+function FieldState({ assessment }: { assessment?: FieldAssessment }) {
+  if (!assessment) return <span className="field-state field-state-unchecked">Unchecked</span>;
+  const label = assessment.status === "ai_suggested" ? `AI ${Math.round(assessment.confidence * 100)}%` : assessment.status.replace(/_/g, " ");
+  return <span className={`field-state field-state-${assessment.status}`}>{label}</span>;
 }
 
 // STUDY: Polling, done right, in 12 lines: start a setInterval, STOP it when
@@ -466,6 +517,8 @@ function Cell({
   editable,
   wide,
   inline,
+  onRecheck,
+  rechecking,
 }: {
   item: Item;
   field: "brand" | "part_name" | "year_start" | "year_end" | "condition_notes";
@@ -475,9 +528,13 @@ function Cell({
   editable: boolean;
   wide?: boolean;
   inline?: boolean;
+  onRecheck: (id: number, field: RecognitionField) => Promise<void>;
+  rechecking: { id: number; field: RecognitionField } | null;
 }) {
   const value = (item[field] ?? "") as string | number;
   const isEditing = editing?.id === item.id && editing.field === field;
+  const assessment = parseFieldAssessments(item.field_reviews)[field];
+  const isRechecking = rechecking?.id === item.id && rechecking.field === field;
 
   const input = (
     <input
@@ -500,11 +557,9 @@ function Cell({
     return isEditing ? (
       input
     ) : (
-      <span
-        onClick={() => editable && setEditing({ id: item.id, field, value: String(value) })}
-        className={editable ? "cursor-text hover:bg-zinc-800 rounded px-1" : "text-zinc-400"}
-      >
-        {value || "-"}
+      <span className="table-field-inline">
+        <button type="button" disabled={!editable} onClick={() => editable && setEditing({ id: item.id, field, value: String(value) })} className={editable ? "cursor-text hover:bg-zinc-800 rounded px-1" : "text-zinc-400"}>{value || "-"}</button>
+        <button type="button" disabled={!editable || isRechecking} onClick={() => onRecheck(item.id, field)} className="table-ai-button" aria-label={`Try AI again for ${field.replace(/_/g, " ")}`}>{isRechecking ? "..." : "AI"}</button>
       </span>
     );
   }
@@ -514,13 +569,10 @@ function Cell({
       {isEditing ? (
         input
       ) : (
-        <span
-          onClick={() => editable && setEditing({ id: item.id, field, value: String(value) })}
-          className={`${editable ? "cursor-text hover:bg-zinc-800 rounded px-1 -mx-1" : ""} ${wide ? "block max-w-[16rem] truncate" : ""}`}
-          title={String(value)}
-        >
-          {value || <span className="text-zinc-600">-</span>}
-        </span>
+        <div className="table-field-cell">
+          <button type="button" disabled={!editable} onClick={() => editable && setEditing({ id: item.id, field, value: String(value) })} className={`${editable ? "cursor-text hover:bg-zinc-800 rounded px-1 -mx-1" : ""} ${wide ? "block max-w-[16rem] truncate" : ""}`} title={String(value)}>{value || <span className="text-zinc-600">-</span>}</button>
+          <div className="table-field-tools"><FieldState assessment={assessment} /><button type="button" disabled={!editable || isRechecking} onClick={() => onRecheck(item.id, field)} className="table-ai-button">{isRechecking ? "Checking" : "Try AI"}</button></div>
+        </div>
       )}
     </td>
   );

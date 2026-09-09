@@ -66,14 +66,14 @@ export async function POST(req: NextRequest) {
   const jobId = Number(info.lastInsertRowid);
 
   const insertItem = db.prepare(
-    "INSERT INTO items (job_id, filename, image_path) VALUES (?, ?, ?)"
+    "INSERT INTO items (job_id, filename, image_path, cutout_path, background_status) VALUES (?, ?, ?, ?, ?)"
   );
   let inserted = 0;
   for (const file of files) {
     const buf = Buffer.from(await file.arrayBuffer());
     try {
-      const { relPath } = await preprocessImage(jobId, file.name, buf);
-      insertItem.run(jobId, file.name, relPath);
+      const processed = await preprocessImage(jobId, file.name, buf);
+      insertItem.run(jobId, file.name, processed.relPath, processed.cutoutPath, processed.backgroundStatus);
       inserted++;
     } catch (err) {
       console.error(`Failed to preprocess ${file.name}`, err);

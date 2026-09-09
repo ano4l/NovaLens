@@ -2,8 +2,8 @@
 // STUDY: THE WORKER — the most important file in the project. Learn this file
 // and you understand the whole product. Three things to trace:
 //   1. tick()         → the polling loop (producer/consumer with a DB as queue)
-//   2. processItem()  → one unit of work: call AI, log cost, advance the state
-//      machine, escalate on needs_review, retry-with-backoff on failure
+//   2. processItem()  → isolate the part background, call AI, persist field
+//      evidence, log exact cost, escalate to consensus, and retry safely
 //   3. maybeFinishJob() → lifecycle bookkeeping: escalation rate + cost guardrail
 // Read it alongside the state diagram in CASE_STUDY.md §3.1.
 // ============================================================================
@@ -13,6 +13,8 @@ import { callCostUSD } from "./cost";
 import { numSetting, getSetting } from "./settings";
 import { Item, Job, JobMode } from "./types";
 import path from "path";
+import { buildFieldAssessments } from "./recognition";
+import { removeBackgroundFromStoredImage } from "./preprocess";
 
 // STUDY: Deliberately tiny numbers. A real deployment scales by running more
 // worker processes/machines against the same queue — the code below doesn't
@@ -102,17 +104,28 @@ async function processItem(item: Item) {
   ensureJobProcessing(job.id);
 
   const { client } = getVisionClient({
-    tier1: getSetting("tier1_model") ?? "dots-studio/dots-3-note-preview:free",
-    tier2: getSetting("tier2_model") ?? "openrouter/free",
+    tier1: getSetting("tier1_model") ?? "qwen/qwen3-vl-235b-a22b-instruct",
+    tier2: getSetting("tier2_model") ?? "google/gemini-3.1-pro-preview",
+    challenger: getSetting("challenger_model") ?? "qwen/qwen3-vl-235b-a22b-thinking",
+    adjudicator: getSetting("adjudicator_model") ?? "openai/gpt-5.4-mini",
     threshold: numSetting("escalation_threshold", 0.8),
   });
 
   try {
     // In batch mode we simulate async latency up-front for express-like flow; real
     // Batch API wiring (submit file, poll job) slots in here without changing callers.
+    if (item.background_status === "pending") {
+      // STUDY: External image work belongs to the durable queue, not the upload
+      // request. A failed removal records its state but does not discard the
+      // normalized image or prevent recognition.
+      const background = await removeBackgroundFromStoredImage(item.image_path);
+      db.prepare("UPDATE items SET cutout_path = ?, background_status = ?, updated_at = datetime('now') WHERE id = ?")
+        .run(background.cutoutPath, background.backgroundStatus, item.id);
+    }
     const imagePath = path.join(UPLOAD_DIR, item.image_path);
     const call = await client.tagImage(imagePath, tier);
-    const cost = callCostUSD(tier, mode, call.inputTokens, call.outputTokens);
+    const fieldReviews = JSON.stringify(buildFieldAssessments(call.result, call.model, numSetting("escalation_threshold", 0.8)));
+    const cost = call.costUsd ?? callCostUSD(tier, mode, call.inputTokens, call.outputTokens);
 
     db.prepare(
       `INSERT INTO api_logs (item_id, job_id, tier, model, mode, input_tokens, output_tokens, cost_usd, latency_ms)
@@ -122,12 +135,13 @@ async function processItem(item: Item) {
     // STUDY: THE ROUTING DECISION — the economic core of the product. Tier 1
     // said "I'm not sure" → we save its partial result (so the reviewer sees
     // *something*), then flip the row to 'escalated' and RESET attempts/
-    // next_retry_at so the Tier-2 pass starts fresh immediately. Tier 2's
-    // result will overwrite these same columns on the next pass.
+    // next_retry_at so the Tier-2 pass starts fresh immediately. Tier 2 runs
+    // two analysts plus an adjudicator, then replaces the provisional values
+    // and stores evidence for each field.
     if (tier === 1 && call.result.needs_review) {
       db.prepare(
         `UPDATE items SET status = 'escalated', tier = 1, brand = ?, part_name = ?, year_start = ?,
-          year_end = ?, condition_notes = ?, confidence = ?, needs_review = 1, raw_json = ?,
+          year_end = ?, condition_notes = ?, confidence = ?, needs_review = 1, raw_json = ?, field_reviews = ?,
           attempts = 0, next_retry_at = 0, updated_at = datetime('now')
          WHERE id = ?`
       ).run(
@@ -138,12 +152,13 @@ async function processItem(item: Item) {
         call.result.condition_notes,
         call.result.confidence,
         JSON.stringify(call.result),
+        fieldReviews,
         item.id
       );
     } else {
       db.prepare(
         `UPDATE items SET status = 'tagged', tier = ?, brand = ?, part_name = ?, year_start = ?,
-          year_end = ?, condition_notes = ?, confidence = ?, needs_review = ?, raw_json = ?,
+          year_end = ?, condition_notes = ?, confidence = ?, needs_review = ?, raw_json = ?, field_reviews = ?,
           updated_at = datetime('now')
          WHERE id = ?`
       ).run(
@@ -156,6 +171,7 @@ async function processItem(item: Item) {
         call.result.confidence,
         call.result.needs_review ? 1 : 0,
         JSON.stringify(call.result),
+        fieldReviews,
         item.id
       );
     }

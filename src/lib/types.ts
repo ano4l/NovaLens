@@ -25,6 +25,21 @@ export type ItemStatus =
   | "flagged_rephoto";
 
 export type Confidence = "high" | "medium" | "low";
+// STUDY: Item-level confidence is too coarse for catalogue work. These field
+// types let the UI say "the part is clear, but the fitment years are not" and
+// preserve a separate verification state for every model-proposed value.
+export type RecognitionField = "brand" | "part_name" | "year_start" | "year_end" | "condition_notes";
+export type FieldReviewStatus = "ai_suggested" | "needs_review" | "confirmed" | "corrected";
+
+export interface FieldAssessment {
+  confidence: number;
+  evidence: string;
+  status: FieldReviewStatus;
+  source: string;
+  updated_at: string;
+}
+
+export type FieldAssessments = Record<RecognitionField, FieldAssessment>;
 
 export interface Job {
   id: number;
@@ -44,6 +59,8 @@ export interface Item {
   job_id: number;
   filename: string;
   image_path: string;
+  cutout_path: string | null;
+  background_status: "pending" | "removed" | "not_configured" | "failed" | "legacy";
   status: ItemStatus;
   // STUDY: Everything below `status` is nullable because the AI may not know
   // (or may not have run yet). `null` here means "unknown", not "empty" — an
@@ -57,6 +74,7 @@ export interface Item {
   needs_review: number;
   tier: number | null;
   raw_json: string | null;
+  field_reviews: string | null;
   // STUDY: Retry bookkeeping lives ON the row. `next_retry_at` is a unix
   // timestamp; the worker only picks up rows whose retry time has passed.
   // Persisting this (rather than keeping timers in memory) means a server
@@ -92,9 +110,9 @@ export interface EditLog {
   created_at: string;
 }
 
-// STUDY: This shape mirrors the responseSchema in vision.ts field-for-field.
+// STUDY: This shape mirrors the response schema in vision.ts field-for-field.
 // When you integrate an external API, define YOUR OWN type for its payload and
-// convert at the boundary. If Google changes the wire format someday, you fix
+// convert at the boundary. If a provider changes its wire format, you fix
 // one file (vision.ts), not the whole app.
 export interface TagResult {
   brand: string;
@@ -104,6 +122,8 @@ export interface TagResult {
   condition_notes: string;
   confidence: Confidence;
   needs_review: boolean;
+  field_confidence: Record<RecognitionField, number>;
+  field_evidence: Record<RecognitionField, string>;
 }
 
 export interface TagCallResult {
@@ -112,4 +132,7 @@ export interface TagCallResult {
   inputTokens: number;
   outputTokens: number;
   latencyMs: number;
+  // OpenRouter reports the exact charged cost. This stays optional so the mock
+  // client and any future provider can fall back to the configured rate model.
+  costUsd?: number;
 }

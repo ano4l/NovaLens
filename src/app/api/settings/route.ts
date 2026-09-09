@@ -12,6 +12,8 @@ export const runtime = "nodejs";
 const EDITABLE_KEYS = new Set([
   "tier1_model",
   "tier2_model",
+  "challenger_model",
+  "adjudicator_model",
   "escalation_threshold",
   "tier1_input_rate",
   "tier1_output_rate",

@@ -3,26 +3,30 @@
 import { useEffect, useState } from "react";
 
 const MODEL_OPTIONS = [
-  { id: "dots-studio/dots-3-note-preview:free", label: "Dots3 Note Preview", note: "Verified structured vision default" },
-  { id: "google/gemma-4-26b-a4b-it:free", label: "Gemma 4 26B A4B", note: "Fast multimodal alternative" },
-  { id: "google/gemma-4-31b-it:free", label: "Gemma 4 31B", note: "Dense quality alternative" },
-  { id: "openrouter/free", label: "OpenRouter Free Router", note: "Availability-first random routing" },
+  { id: "qwen/qwen3-vl-235b-a22b-instruct", label: "Qwen3 VL 235B Instruct", note: "Visual detail and markings" },
+  { id: "qwen/qwen3-vl-235b-a22b-thinking", label: "Qwen3 VL 235B Thinking", note: "Independent visual reasoning" },
+  { id: "google/gemini-3.1-pro-preview", label: "Gemini 3.1 Pro Preview", note: "Frontier multimodal analyst" },
+  { id: "openai/gpt-5.4-mini", label: "GPT-5.4 Mini", note: "Cost-controlled adjudicator" },
+  { id: "dots-studio/dots-3-note-preview:free", label: "Dots3 Note Preview", note: "Free prototype model" },
+  { id: "openrouter/free", label: "OpenRouter Free Router", note: "Random free availability route" },
 ];
 
 const GROUPS = [
   {
     title: "Routing",
-    description: "Choose the fast first pass and the stronger escalation pass.",
+    description: "Tier 1 handles routine images. Escalations use two independent analysts and an adjudicator.",
     fields: [
       { key: "tier1_model", label: "Tier 1 model", kind: "model" },
       { key: "tier2_model", label: "Tier 2 model", kind: "model" },
+      { key: "challenger_model", label: "Independent challenger", kind: "model" },
+      { key: "adjudicator_model", label: "Consensus adjudicator", kind: "model" },
       { key: "escalation_threshold", label: "Escalation threshold", hint: "0 to 1. Higher sends more uncertain items to Tier 2." },
       { key: "max_attempts", label: "Attempts per image", hint: "1 to 10 before manual review." },
     ],
   },
   {
     title: "Cost model",
-    description: "Keep free-model rates at zero. Update these when moving to paid endpoints.",
+    description: "These rates drive forecasts. Actual charged cost is captured from each OpenRouter response.",
     fields: [
       { key: "tier1_input_rate", label: "Tier 1 input / 1M tokens" },
       { key: "tier1_output_rate", label: "Tier 1 output / 1M tokens" },
@@ -83,6 +87,17 @@ export default function AdminPage() {
     }
   };
 
+  const applyQualityConsensus = () => {
+    setSettings((current) => ({
+      ...current,
+      tier1_model: "qwen/qwen3-vl-235b-a22b-instruct",
+      tier2_model: "google/gemini-3.1-pro-preview",
+      challenger_model: "qwen/qwen3-vl-235b-a22b-thinking",
+      adjudicator_model: "openai/gpt-5.4-mini",
+    }));
+    setState("idle");
+  };
+
   return (
     <div className="max-w-5xl mx-auto space-y-8">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-5">
@@ -97,6 +112,14 @@ export default function AdminPage() {
       </div>
 
       {error && <div role="alert" className="rounded-lg border border-red-900 bg-red-950/30 px-4 py-3 text-sm text-red-300">{error}</div>}
+
+      <section className="panel p-5 sm:p-6 flex flex-col sm:flex-row gap-4 sm:items-center sm:justify-between">
+        <div>
+          <h2 className="font-medium">Recommended quality consensus</h2>
+          <p className="text-sm text-zinc-500 mt-1 max-w-2xl">Qwen handles fine visual detail, Gemini challenges the identification, and GPT adjudicates disagreements. Exact charged cost is recorded from OpenRouter.</p>
+        </div>
+        <button type="button" onClick={applyQualityConsensus} className="secondary-button px-4 py-2.5 text-sm">Apply pairing</button>
+      </section>
 
       <div className="grid gap-5">
         {GROUPS.map((group) => (
@@ -131,6 +154,14 @@ export default function AdminPage() {
           <p className="text-sm text-zinc-500 mt-1">Set <code className="text-amber-300">OPENROUTER_API_KEY</code> in <code className="text-amber-300">.env</code>. Without it, NovaLens safely uses mock results.</p>
         </div>
         <span className="self-start sm:self-auto rounded-full border border-zinc-700 px-3 py-1 text-xs text-zinc-400">Server-side secret</span>
+      </div>
+
+      <div className="panel p-5 sm:p-6 flex flex-col sm:flex-row gap-4 sm:items-center sm:justify-between">
+        <div>
+          <h2 className="font-medium">Background removal</h2>
+          <p className="text-sm text-zinc-500 mt-1">Set <code className="text-amber-300">REMOVE_BG_API_KEY</code> to create a transparent cutout and a clean white-background image at upload time.</p>
+        </div>
+        <span className="self-start sm:self-auto rounded-full border border-zinc-700 px-3 py-1 text-xs text-zinc-400">Optional provider</span>
       </div>
     </div>
   );
