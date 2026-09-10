@@ -11,15 +11,15 @@ import { JobMode } from "./types";
 // here even though calls are per-item in this MVP — the worker's call site
 // wouldn't change when real batch submission lands; only where the CALL
 // happens moves.
-export function callCostUSD(
+export async function callCostUSD(
   tier: 1 | 2,
   mode: JobMode,
   inputTokens: number,
   outputTokens: number
-): number {
-  const inRate = Math.max(0, numSetting(`tier${tier}_input_rate`, 0));
-  const outRate = Math.max(0, numSetting(`tier${tier}_output_rate`, 0));
-  const discount = mode === "batch" ? Math.min(1, Math.max(0, numSetting("batch_discount", 0))) : 0;
+): Promise<number> {
+  const inRate = Math.max(0, await numSetting(`tier${tier}_input_rate`, 0));
+  const outRate = Math.max(0, await numSetting(`tier${tier}_output_rate`, 0));
+  const discount = mode === "batch" ? Math.min(1, Math.max(0, await numSetting("batch_discount", 0))) : 0;
   const raw = (inputTokens / 1_000_000) * inRate + (outputTokens / 1_000_000) * outRate;
   return raw * (1 - discount);
 }
@@ -28,15 +28,15 @@ export function callCostUSD(
 // (images × expected escalation rate × Tier-2 rate). Same estimates appear in
 // the upload UI (so the customer sees cost BEFORE committing) and on the job
 // card (so guardrails can compare est vs actual after).
-export function estimateJobCostUSD(imageCount: number, mode: JobMode): number {
-  const s = getSettings();
+export async function estimateJobCostUSD(imageCount: number, mode: JobMode): Promise<number> {
+  const s = await getSettings();
   const inTok = Number(s.est_input_tokens_per_image ?? 1105);
   const outTok = Number(s.est_output_tokens_per_image ?? 150);
   const escRate = Number(s.est_escalation_rate ?? 0.1);
   const tier1Count = imageCount;
   const tier2Count = Math.round(imageCount * escRate);
   return (
-    callCostUSD(1, mode, tier1Count * inTok, tier1Count * outTok) +
-    callCostUSD(2, mode, tier2Count * inTok, tier2Count * outTok)
+    await callCostUSD(1, mode, tier1Count * inTok, tier1Count * outTok) +
+    await callCostUSD(2, mode, tier2Count * inTok, tier2Count * outTok)
   );
 }

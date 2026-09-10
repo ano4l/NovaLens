@@ -43,8 +43,9 @@ function validatedValue(field: (typeof EDITABLE)[number], value: unknown): unkno
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const db = getDb();
-  const item = db.prepare("SELECT * FROM items WHERE id = ?").get(id) as Item | undefined;
+  const db = await getDb();
+  const { rows: itemRows } = await db.query<Item>("SELECT * FROM items WHERE id = $1", [id]);
+  const item = itemRows[0];
   if (!item) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const body = await req.json() as Record<string, unknown>;
@@ -106,25 +107,27 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json({ item });
   }
 
+  const values = Object.values(updates);
   const sets = Object.keys(updates)
-    .map((k) => `${k} = ?`)
+    .map((k, index) => `${k} = $${index + 1}`)
     .join(", ");
-  db.prepare(`UPDATE items SET ${sets}, updated_at = datetime('now') WHERE id = ?`).run(
-    ...Object.values(updates),
-    item.id
-  );
+  await db.query(`UPDATE items SET ${sets}, updated_at = NOW() WHERE id = $${values.length + 1}`, [...values, item.id]);
 
-  const logEdit = db.prepare(
-    "INSERT INTO edit_log (item_id, field, old_value, new_value, edited_by) VALUES (?, ?, ?, ?, ?)"
-  );
   for (const e of edits) {
-    logEdit.run(item.id, e.field, e.oldVal == null ? null : String(e.oldVal), e.newVal == null ? null : String(e.newVal), typeof body.edited_by === "string" ? body.edited_by : "manager");
+    await db.query(
+      "INSERT INTO edit_log (item_id, field, old_value, new_value, edited_by) VALUES ($1, $2, $3, $4, $5)",
+      [item.id, e.field, e.oldVal == null ? null : String(e.oldVal), e.newVal == null ? null : String(e.newVal), typeof body.edited_by === "string" ? body.edited_by : "manager"]
+    );
   }
   if (confirmationLog) {
-    logEdit.run(item.id, `${confirmationLog.field}.review_status`, confirmationLog.oldStatus, "confirmed", typeof body.edited_by === "string" ? body.edited_by : "manager");
+    await db.query(
+      "INSERT INTO edit_log (item_id, field, old_value, new_value, edited_by) VALUES ($1, $2, $3, $4, $5)",
+      [item.id, `${confirmationLog.field}.review_status`, confirmationLog.oldStatus, "confirmed", typeof body.edited_by === "string" ? body.edited_by : "manager"]
+    );
   }
 
-  const updated = db.prepare("SELECT * FROM items WHERE id = ?").get(item.id);
+  const { rows: updatedRows } = await db.query("SELECT * FROM items WHERE id = $1", [item.id]);
+  const updated = updatedRows[0];
   return NextResponse.json({ item: updated });
 }
 
@@ -133,8 +136,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // The worker sees 'pending' + tier NULL → treats it as brand new. The old
   // api_logs rows survive, so cost history is still truthful.
   const { id } = await params;
-  const db = getDb();
-  const item = db.prepare("SELECT * FROM items WHERE id = ?").get(id) as Item | undefined;
+  const db = await getDb();
+  const { rows: itemRows } = await db.query<Item>("SELECT * FROM items WHERE id = $1", [id]);
+  const item = itemRows[0];
   if (!item) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const form = await req.formData();
@@ -146,13 +150,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (validationError) return NextResponse.json({ error: validationError }, { status: 400 });
   const buf = Buffer.from(await file.arrayBuffer());
   const processed = await preprocessImage(item.job_id, file.name, buf);
-  db.prepare(
-    `UPDATE items SET image_path = ?, cutout_path = ?, background_status = ?, filename = ?, status = 'pending', tier = NULL, attempts = 0,
+  await db.query(
+    `UPDATE items SET image_path = $1, cutout_path = $2, background_status = $3, filename = $4, status = 'pending', tier = NULL, attempts = 0,
        next_retry_at = 0, brand = NULL, part_name = NULL, year_start = NULL, year_end = NULL,
        condition_notes = NULL, confidence = NULL, needs_review = 0, raw_json = NULL, field_reviews = NULL,
-       updated_at = datetime('now') WHERE id = ?`
-  ).run(processed.relPath, processed.cutoutPath, processed.backgroundStatus, file.name, item.id);
-  db.prepare("UPDATE jobs SET status = 'processing', updated_at = datetime('now') WHERE id = ? AND status = 'review'").run(item.job_id);
+       updated_at = NOW() WHERE id = $5`,
+    [processed.relPath, processed.cutoutPath, processed.backgroundStatus, file.name, item.id]
+  );
+  await db.query("UPDATE jobs SET status = 'processing', updated_at = NOW() WHERE id = $1 AND status = 'review'", [item.job_id]);
 
   const uploadRoot = `${path.resolve(UPLOAD_DIR)}${path.sep}`;
   for (const storedPath of [item.image_path, item.cutout_path]) {

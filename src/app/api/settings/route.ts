@@ -44,7 +44,7 @@ const BOUNDS: Record<string, [number, number]> = {
 };
 
 export async function GET() {
-  return NextResponse.json({ settings: getSettings() });
+  return NextResponse.json({ settings: await getSettings() });
 }
 
 export async function PUT(req: NextRequest) {
@@ -66,6 +66,6 @@ export async function PUT(req: NextRequest) {
     }
     updates[k] = cleanValue;
   }
-  setSettings(updates);
-  return NextResponse.json({ settings: getSettings() });
+  await setSettings(updates);
+  return NextResponse.json({ settings: await getSettings() });
 }

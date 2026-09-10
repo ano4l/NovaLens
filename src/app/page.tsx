@@ -25,21 +25,21 @@ const STATUS_STYLE: Record<string, string> = {
   done: "border-emerald-700/70 text-emerald-300 bg-emerald-950/30",
 };
 
-function formatDate(value: string) {
+function formatDate(value: string | Date) {
+  if (value instanceof Date) return new Intl.DateTimeFormat("en-ZA", { dateStyle: "medium" }).format(value);
   const date = new Date(`${value.replace(" ", "T")}Z`);
   return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat("en-ZA", { dateStyle: "medium" }).format(date);
 }
 
-export default function HomePage() {
-  const jobs = getDb()
-    .prepare(
+export default async function HomePage() {
+  const db = await getDb();
+  const { rows: jobs } = await db.query<JobRow>(
       `SELECT j.*,
-        (SELECT COALESCE(SUM(cost_usd), 0) FROM api_logs WHERE job_id = j.id) as actual_cost_usd,
-        (SELECT COUNT(*) FROM items WHERE job_id = j.id AND status IN ('pending','processing','escalated')) as remaining,
-        (SELECT COUNT(*) FROM items WHERE job_id = j.id AND status = 'approved') as approved
+        (SELECT COALESCE(SUM(cost_usd), 0)::float8 FROM api_logs WHERE job_id = j.id) as actual_cost_usd,
+        (SELECT COUNT(*)::int FROM items WHERE job_id = j.id AND status IN ('pending','processing','escalated')) as remaining,
+        (SELECT COUNT(*)::int FROM items WHERE job_id = j.id AND status = 'approved') as approved
        FROM jobs j ORDER BY j.id DESC`
-    )
-    .all() as JobRow[];
+  );
 
   const totals = jobs.reduce(
     (sum, job) => ({

@@ -14,7 +14,9 @@ export const runtime = "nodejs";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const item = getDb().prepare("SELECT * FROM items WHERE id = ?").get(id) as Item | undefined;
+  const db = await getDb();
+  const { rows } = await db.query<Item>("SELECT * FROM items WHERE id = $1", [id]);
+  const item = rows[0];
   if (!item) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const wantsCutout = req.nextUrl.searchParams.get("variant") === "cutout";
   const storedPath = wantsCutout ? item.cutout_path : item.image_path;

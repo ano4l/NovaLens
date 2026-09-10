@@ -45,7 +45,7 @@ defining design decision is **cost-aware routing with consensus escalation**:
   quality preset. The best production mix must still be measured on labelled parts.
 
 ```
-Browser ──upload──▶ validate + normalize ──▶ SQLite queue + private disk
+Browser ──upload──▶ validate + normalize ──▶ Supabase Postgres queue + private disk
                                                    │
                                       worker loop (polls every 1.5s)
                                                    │
@@ -80,7 +80,7 @@ Read in this order. Each step builds on the vocabulary of the previous one.
 | # | File | What it teaches |
 |---|------|-----------------|
 | 1 | `src/lib/types.ts` | Modeling a domain with TypeScript: string-literal unions as a state machine, nullable fields as "unknown from the AI" |
-| 2 | `src/lib/db.ts` | SQLite in Node, schema design, indexes, why a module-level singleton matters in dev (hot reload) |
+| 2 | `src/lib/db.ts` | Supabase Postgres in Node, idempotent schema creation, indexes, and pooled connections |
 | 3 | `src/lib/settings.ts` | Runtime configuration: why tunables live in a DB table, not in code |
 | 4 | `src/lib/preprocess.ts` | Fast upload normalization plus queued background isolation and white-background composition |
 | 5 | `src/lib/cost.ts` | Turning pricing into pure functions: cost as data, config-driven formulas |
@@ -216,7 +216,7 @@ A "real" deployment would use Cloud Tasks or Pub/Sub. Here the worker simply
 SELECTs the next due row every 1.5 seconds. This is deliberate:
 
 - One process to run, zero infra — perfect for learning.
-- SQLite gives transactions and persistence for free.
+- Supabase Postgres provides durable persistence; the app still needs a managed object store for production image bytes.
 - Swapping the transport later (Pub/Sub) means rewriting only the *fetch next
   item* part of `tick()`; everything downstream is unchanged.
 
@@ -226,7 +226,7 @@ queue moved to Pub/Sub.
 ### 3.9 Server Components vs. Client Components
 
 - `src/app/jobs/[id]/page.tsx` is a **Server Component**: it runs on the server,
-  queries SQLite directly, and sends finished HTML. No `useEffect`, no fetch
+  queries Postgres directly, and sends finished HTML. No `useEffect`, no fetch
   spinners for the first render.
 - `ReviewTable.tsx` is a **Client Component** (`"use client"`): it receives the
   server-rendered rows as props (`initialItems`) and takes over from there:
@@ -279,8 +279,8 @@ Real production code would differ — by design here, for clarity:
 | Production choice | This repo | Why |
 |---|---|---|
 | GCS + signed URLs | local `data/uploads` | runs anywhere, no cloud account |
-| Cloud Tasks / Pub/Sub | SQLite polling worker | one process, no infra |
-| Postgres | SQLite | file-based DB, zero setup |
+| Cloud Tasks / Pub/Sub | Postgres polling worker | one process, no infra |
+| Object storage | Local upload directory | Vercel filesystem is ephemeral |
 | Background removal | queued remove.bg call with local files | swap the provider boundary or self-host segmentation for scale and data-residency needs |
 | Model evaluation | configurable consensus with field evidence | benchmark pairings on a labelled warehouse dataset before claiming production accuracy |
 | Real Batch API | per-item calls plus configurable estimate discount | keeps the worker state machine easy to inspect |

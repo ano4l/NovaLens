@@ -1,6 +1,6 @@
 // ============================================================================
 // STUDY: A SERVER COMPONENT (no "use client"). This code runs only on the
-// server: it queries SQLite directly and renders HTML. No loading spinner, no
+// server: it queries Postgres directly and renders HTML. No loading spinner, no
 // useEffect, no API round-trip for the first paint. Compare with
 // ReviewTable.tsx — data crosses the server→client boundary ONCE, as the
 // `initialItems` prop.
@@ -16,26 +16,24 @@ export const dynamic = "force-dynamic";
 
 export default async function JobPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const db = getDb();
-  const job = db.prepare("SELECT * FROM jobs WHERE id = ?").get(id) as Job | undefined;
+  const db = await getDb();
+  const { rows: jobRows } = await db.query<Job>("SELECT * FROM jobs WHERE id = $1", [id]);
+  const job = jobRows[0];
   if (!job) notFound();
 
-  const items = db
-    .prepare(
-      `SELECT * FROM items WHERE job_id = ?
+  const { rows: items } = await db.query<Item>(
+      `SELECT * FROM items WHERE job_id = $1
        ORDER BY (confidence IS NULL) DESC,
          CASE confidence WHEN 'low' THEN 0 WHEN 'medium' THEN 1 WHEN 'high' THEN 2 ELSE 3 END, id ASC`
-    )
-    .all(id) as Item[];
+    , [id]);
 
-  const cost = db
-    .prepare(
-      `SELECT COALESCE(SUM(cost_usd), 0) as total_cost,
-              COALESCE(SUM(input_tokens), 0) as input_tokens,
-              COALESCE(SUM(output_tokens), 0) as output_tokens
-       FROM api_logs WHERE job_id = ?`
-    )
-    .get(id) as { total_cost: number; input_tokens: number; output_tokens: number };
+  const { rows: costRows } = await db.query<{ total_cost: number; input_tokens: number; output_tokens: number }>(
+    `SELECT COALESCE(SUM(cost_usd), 0)::float8 as total_cost,
+            COALESCE(SUM(input_tokens), 0)::int as input_tokens,
+            COALESCE(SUM(output_tokens), 0)::int as output_tokens
+     FROM api_logs WHERE job_id = $1`, [id]
+  );
+  const cost = costRows[0];
   const approved = items.filter((item) => item.status === "approved").length;
   const reviewCount = items.filter((item) => item.needs_review === 1 && item.status !== "approved").length;
 

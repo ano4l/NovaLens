@@ -18,24 +18,26 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const body = await req.json() as { field?: unknown };
   if (!isRecognitionField(body.field)) return NextResponse.json({ error: "Choose a valid field to recognise" }, { status: 400 });
   const field: RecognitionField = body.field;
-  const db = getDb();
-  const item = db.prepare("SELECT * FROM items WHERE id = ?").get(id) as Item | undefined;
+  const db = await getDb();
+  const { rows: itemRows } = await db.query<Item>("SELECT * FROM items WHERE id = $1", [id]);
+  const item = itemRows[0];
   if (!item) return NextResponse.json({ error: "Not found" }, { status: 404 });
   if (["pending", "processing", "escalated"].includes(item.status)) return NextResponse.json({ error: "Wait for the current recognition pass to finish" }, { status: 409 });
-  const job = db.prepare("SELECT * FROM jobs WHERE id = ?").get(item.job_id) as Job;
+  const { rows: jobRows } = await db.query<Job>("SELECT * FROM jobs WHERE id = $1", [item.job_id]);
+  const job = jobRows[0];
   const { client } = getVisionClient({
-    tier1: getSetting("tier1_model") ?? "qwen/qwen3-vl-235b-a22b-instruct",
-    tier2: getSetting("tier2_model") ?? "google/gemini-3.1-pro-preview",
-    challenger: getSetting("challenger_model") ?? "qwen/qwen3-vl-235b-a22b-thinking",
-    adjudicator: getSetting("adjudicator_model") ?? "openai/gpt-5.4-mini",
-    threshold: numSetting("escalation_threshold", 0.8),
+    tier1: await getSetting("tier1_model") ?? "qwen/qwen3-vl-235b-a22b-instruct",
+    tier2: await getSetting("tier2_model") ?? "google/gemini-3.1-pro-preview",
+    challenger: await getSetting("challenger_model") ?? "qwen/qwen3-vl-235b-a22b-thinking",
+    adjudicator: await getSetting("adjudicator_model") ?? "openai/gpt-5.4-mini",
+    threshold: await numSetting("escalation_threshold", 0.8),
   });
 
   try {
     const call = await client.recheckField(path.join(UPLOAD_DIR, item.image_path), field);
-    const cost = call.costUsd ?? callCostUSD(2, job.mode as JobMode, call.inputTokens, call.outputTokens);
-    db.prepare(`INSERT INTO api_logs (item_id, job_id, tier, model, mode, input_tokens, output_tokens, cost_usd, latency_ms) VALUES (?, ?, 2, ?, ?, ?, ?, ?, ?)`)
-      .run(item.id, item.job_id, call.model, job.mode, call.inputTokens, call.outputTokens, cost, call.latencyMs);
+    const cost = call.costUsd ?? await callCostUSD(2, job.mode as JobMode, call.inputTokens, call.outputTokens);
+    await db.query(`INSERT INTO api_logs (item_id, job_id, tier, model, mode, input_tokens, output_tokens, cost_usd, latency_ms) VALUES ($1, $2, 2, $3, $4, $5, $6, $7, $8)`,
+      [item.id, item.job_id, call.model, job.mode, call.inputTokens, call.outputTokens, cost, call.latencyMs]);
 
     let value = call.result[field];
     // STUDY: Rechecking one edge of a year range must not create an impossible
@@ -50,22 +52,23 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       evidence = `Candidate conflicted with the current start year. ${evidence}`;
     }
     const confidence = call.result.field_confidence[field];
-    const threshold = numSetting("escalation_threshold", 0.8);
+    const threshold = await numSetting("escalation_threshold", 0.8);
     const reviews = parseFieldAssessments(item.field_reviews);
     reviews[field] = { confidence, evidence, status: confidence >= threshold ? "ai_suggested" : "needs_review", source: call.model, updated_at: new Date().toISOString() };
-    db.prepare(`UPDATE items SET ${field} = ?, field_reviews = ?, needs_review = 1, status = 'tagged', updated_at = datetime('now') WHERE id = ?`)
-      .run(value, JSON.stringify(reviews), item.id);
+    await db.query(`UPDATE items SET ${field} = $1, field_reviews = $2, needs_review = 1, status = 'tagged', updated_at = NOW() WHERE id = $3`,
+      [value, JSON.stringify(reviews), item.id]);
     const oldValue = item[field];
     if (oldValue !== value) {
-      db.prepare("INSERT INTO edit_log (item_id, field, old_value, new_value, edited_by) VALUES (?, ?, ?, ?, 'AI consensus recheck')")
-        .run(item.id, field, oldValue == null ? null : String(oldValue), value == null ? null : String(value));
+      await db.query("INSERT INTO edit_log (item_id, field, old_value, new_value, edited_by) VALUES ($1, $2, $3, $4, 'AI consensus recheck')",
+        [item.id, field, oldValue == null ? null : String(oldValue), value == null ? null : String(value)]);
     }
-    const updated = db.prepare("SELECT * FROM items WHERE id = ?").get(item.id);
+    const { rows: updatedRows } = await db.query("SELECT * FROM items WHERE id = $1", [item.id]);
+    const updated = updatedRows[0];
     return NextResponse.json({ item: updated });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Recognition failed";
-    db.prepare(`INSERT INTO api_logs (item_id, job_id, tier, model, mode, error, latency_ms) VALUES (?, ?, 2, 'field-recheck-error', ?, ?, 0)`)
-      .run(item.id, item.job_id, job.mode, message);
+    await db.query(`INSERT INTO api_logs (item_id, job_id, tier, model, mode, error, latency_ms) VALUES ($1, $2, 2, 'field-recheck-error', $3, $4, 0)`,
+      [item.id, item.job_id, job.mode, message]);
     return NextResponse.json({ error: message }, { status: 502 });
   }
 }

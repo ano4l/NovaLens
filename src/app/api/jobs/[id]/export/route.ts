@@ -32,13 +32,12 @@ function title(i: Item): string {
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const format = req.nextUrl.searchParams.get("format") ?? "csv";
-  const db = getDb();
-  const job = db.prepare("SELECT * FROM jobs WHERE id = ?").get(id) as { name: string } | undefined;
+  const db = await getDb();
+  const { rows: jobRows } = await db.query<{ name: string }>("SELECT * FROM jobs WHERE id = $1", [id]);
+  const job = jobRows[0];
   if (!job) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const items = db
-    .prepare("SELECT * FROM items WHERE job_id = ? AND status = 'approved' ORDER BY id ASC")
-    .all(id) as Item[];
+  const { rows: items } = await db.query<Item>("SELECT * FROM items WHERE job_id = $1 AND status = 'approved' ORDER BY id ASC", [id]);
 
   let headers: string[];
   let rows: unknown[][];
