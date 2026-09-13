@@ -18,6 +18,7 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import { FieldAssessment, Item, RecognitionField } from "@/lib/types";
 import { parseFieldAssessments } from "@/lib/recognition";
+import { prepareUploadFile } from "@/lib/client-image";
 
 const CONF_STYLE: Record<string, string> = {
   high: "border-emerald-800 text-emerald-300 bg-emerald-950/30",
@@ -31,10 +32,12 @@ export default function ReviewTable({
   jobId,
   initialItems,
   jobStatus,
+  workflowMode,
 }: {
   jobId: number;
   initialItems: Item[];
   jobStatus: string;
+  workflowMode: string;
 }) {
   const [items, setItems] = useState<Item[]>(initialItems);
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -188,8 +191,15 @@ export default function ReviewTable({
 
   const onRephotoFile = async (file: File | undefined) => {
     if (!file || rephotoTarget.current == null) return;
+    setError(null);
     const form = new FormData();
-    form.set("file", file);
+    try {
+      form.set("file", await prepareUploadFile(file));
+    } catch (error) {
+      setError(error instanceof Error ? `${file.name} ${error.message}` : "Could not prepare the replacement photo");
+      rephotoTarget.current = null;
+      return;
+    }
     const res = await fetch(`/api/items/${rephotoTarget.current}`, { method: "POST", body: form });
     if (res.ok) {
       const fresh = await fetch(`/api/jobs/${jobId}`).then((r) => r.json());
@@ -205,6 +215,7 @@ export default function ReviewTable({
 
   return (
     <div className="space-y-4">
+      {workflowMode === "training" && <div className="training-cue" role="note"><strong>Training batch</strong><span>When you correct a recognition field, NovaLens saves the AI-to-human change as a reusable example for future Gemini calls.</span></div>}
       <input
         ref={rephotoRef}
         type="file"

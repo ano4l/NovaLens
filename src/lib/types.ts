@@ -8,6 +8,7 @@
 // "this value can only be one of these exact strings." Typo 'bach' → compile
 // error. This is how you make illegal states unrepresentable.
 export type JobMode = "batch" | "express";
+export type WorkflowMode = "production" | "training";
 export type JobStatus = "queued" | "processing" | "review" | "exporting" | "done";
 // STUDY: This union IS the state machine of the pipeline. Every item moves
 // through these statuses exactly like the diagram in CASE_STUDY.md §3.1.
@@ -45,6 +46,7 @@ export interface Job {
   id: number;
   name: string;
   mode: JobMode;
+  workflow_mode: WorkflowMode;
   status: JobStatus;
   image_count: number;
   est_cost_usd: number | null;
@@ -52,6 +54,36 @@ export interface Job {
   guardrail_breached: number;
   created_at: string;
   updated_at: string;
+}
+
+export type TrainingGuidelineKind = "cataloguing" | "fitment" | "condition" | "brand" | "safety" | "general";
+export interface TrainingGuideline {
+  id: number;
+  title: string;
+  instruction: string;
+  kind: TrainingGuidelineKind;
+  priority: number;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TrainingExample {
+  id: number;
+  item_id: number | null;
+  job_id: number | null;
+  field: RecognitionField;
+  previous_ai_value: string | null;
+  corrected_value: string | null;
+  image_path: string | null;
+  reviewer: string;
+  created_at: string;
+  job_name?: string | null;
+}
+
+export interface RecognitionContext {
+  guidelines: Array<Pick<TrainingGuideline, "title" | "instruction" | "kind" | "priority">>;
+  examples: Array<Pick<TrainingExample, "field" | "previous_ai_value" | "corrected_value">>;
 }
 
 export interface Item {
@@ -132,7 +164,7 @@ export interface TagCallResult {
   inputTokens: number;
   outputTokens: number;
   latencyMs: number;
-  // OpenRouter reports the exact charged cost. This stays optional so the mock
+  // OpenRouter may report exact charged cost. This stays optional so direct Gemini
   // client and any future provider can fall back to the configured rate model.
   costUsd?: number;
 }

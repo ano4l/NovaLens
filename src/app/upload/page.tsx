@@ -7,19 +7,28 @@
 // ============================================================================
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { MAX_UPLOAD_FILES, validateImageFile } from "@/lib/uploads";
+import { prepareUploadFile } from "@/lib/client-image";
 
 export default function UploadPage() {
   const router = useRouter();
   const [name, setName] = useState("");
   const [mode, setMode] = useState<"batch" | "express">("batch");
+  const [workflowMode, setWorkflowMode] = useState<"production" | "training">("production");
   const [files, setFiles] = useState<File[]>([]);
   const [dragging, setDragging] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [estimate, setEstimate] = useState<number | null>(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
+
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("workflow") === "training") {
+      setWorkflowMode("training"); setMode("batch");
+    }
+  }, []);
 
   const refreshEstimate = useCallback(async (count: number, m: string) => {
     if (count === 0) {
@@ -53,16 +62,30 @@ export default function UploadPage() {
     setSubmitting(true);
     setError(null);
     try {
-      // STUDY: FormData == multipart/form-data — the browser's built-in way to
-      // stream files. The server side (api/jobs/route.ts POST) reads this exact
-      // shape back with req.formData(). Nothing here is JSON; files aren't.
-      const form = new FormData();
-      form.set("name", name || `Shipment ${new Date().toISOString().slice(0, 10)}`);
-      form.set("mode", mode);
-      for (const f of files) form.append("files", f);
-      const res = await fetch("/api/jobs", { method: "POST", body: form });
+      setUploadProgress(0);
+      const res = await fetch("/api/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: name || `Shipment ${new Date().toISOString().slice(0, 10)}`, mode, workflow_mode: workflowMode, image_count: files.length }),
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Upload failed");
+      const failures: string[] = [];
+      for (let index = 0; index < files.length; index++) {
+        try {
+          const prepared = await prepareUploadFile(files[index]);
+          const form = new FormData();
+          form.set("file", prepared);
+          const upload = await fetch(`/api/jobs/${data.jobId}/items`, { method: "POST", body: form });
+          const result = await upload.json();
+          if (!upload.ok) throw new Error(result.error ?? "Upload failed");
+        } catch (uploadError) {
+          failures.push(`${files[index].name}: ${uploadError instanceof Error ? uploadError.message : "failed"}`);
+        }
+        setUploadProgress(index + 1);
+      }
+      if (failures.length === files.length) throw new Error("None of the selected product photos could be uploaded.");
+      if (failures.length) sessionStorage.setItem(`novalens-upload-warning-${data.jobId}`, `${failures.length} image${failures.length === 1 ? "" : "s"} could not be uploaded.`);
       router.push(`/jobs/${data.jobId}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -71,16 +94,16 @@ export default function UploadPage() {
   };
 
   return (
-    <div className="max-w-5xl mx-auto">
-      <div className="mb-8">
-        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-amber-400 mb-3">New intake</p>
-        <h1 className="page-title">Create a shipment</h1>
-        <p className="page-intro mt-3">Name the batch, choose how it should run, then add clean photos of one part per frame.</p>
+    <div className="page-stack">
+      <div className="page-heading">
+        <div><p className="eyebrow">New intake</p>
+        <h1>Create a recognition batch</h1>
+        <p>Name the batch, choose its operating workflow, then add clear photos with one part per frame.</p></div>
       </div>
 
       <div className="grid lg:grid-cols-[minmax(0,1fr)_18rem] gap-6 items-start">
-        <div className="panel p-5 sm:p-7">
-      <label htmlFor="shipment-name" className="block text-sm text-zinc-300 mb-2">Shipment name</label>
+        <div className="panel intake-panel">
+      <label htmlFor="shipment-name" className="form-label">Batch name</label>
       <input
         id="shipment-name"
         value={name}
@@ -91,25 +114,25 @@ export default function UploadPage() {
       />
 
       <fieldset>
-      <legend className="block text-sm text-zinc-300 mb-2">Processing mode</legend>
-      <div className="grid sm:grid-cols-2 gap-3 mb-6">
-        {(["batch", "express"] as const).map((m) => (
+      <legend className="form-label">Operating mode</legend>
+      <div className="mode-grid">
+        {([
+          { id: "standard", label: "Standard batch", note: "Queue-efficient processing for routine catalogue work." },
+          { id: "express", label: "Express", note: "Prioritised processing for urgent smaller batches." },
+          { id: "training", label: "Training", note: "Process normally and remember reviewed corrections as examples." },
+        ] as const).map((choice) => (
           <button
             type="button"
-            key={m}
+            key={choice.id}
             onClick={() => {
-              setMode(m);
-              refreshEstimate(files.length, m);
+              const nextMode = choice.id === "express" ? "express" : "batch";
+              setMode(nextMode); setWorkflowMode(choice.id === "training" ? "training" : "production");
+              refreshEstimate(files.length, nextMode);
             }}
-            className={`rounded-xl border px-4 py-4 text-left ${
-              mode === m ? "border-amber-500/80 bg-amber-500/[0.08]" : "border-zinc-700 bg-zinc-900/40 hover:border-zinc-600"
-            }`}
-            aria-pressed={mode === m}
+            className={`mode-card ${(choice.id === "training" ? workflowMode === "training" : workflowMode === "production" && mode === (choice.id === "standard" ? "batch" : "express")) ? "selected" : ""}`}
+            aria-pressed={choice.id === "training" ? workflowMode === "training" : workflowMode === "production" && mode === (choice.id === "standard" ? "batch" : "express")}
           >
-            <div className="font-medium capitalize flex justify-between gap-3"><span>{m}</span><span className="text-xs text-zinc-500">{mode === m ? "Selected" : ""}</span></div>
-            <div className="text-xs text-zinc-400 mt-1.5 leading-relaxed">
-              {m === "batch" ? "Queue-friendly processing for larger folders." : "Prioritised processing for smaller urgent batches."}
-            </div>
+            <span className="mode-check" /> <strong>{choice.label}</strong><small>{choice.note}</small>
           </button>
         ))}
       </div>
@@ -126,12 +149,10 @@ export default function UploadPage() {
           setDragging(false);
           addFiles(e.dataTransfer.files);
         }}
-        className={`border border-dashed rounded-xl px-5 py-10 sm:py-14 text-center mb-4 transition-colors ${
-          dragging ? "border-amber-500 bg-amber-500/[0.06]" : "border-zinc-600 bg-zinc-950/30"
-        }`}
+        className={`upload-dropzone ${dragging ? "dragging" : ""}`}
       >
         <div className="text-lg font-medium">Drop part photos here</div>
-        <p className="text-sm text-zinc-500 mt-1 mb-5">JPEG, PNG, WebP, AVIF, or TIFF. Up to 15 MB each.</p>
+        <p>JPEG, PNG, WebP, AVIF, or TIFF · up to 15 MB each</p>
         <label className="secondary-button px-4 py-2.5 cursor-pointer">
           Browse folder
           <input
@@ -181,19 +202,20 @@ export default function UploadPage() {
         disabled={files.length === 0 || submitting}
         className="primary-button w-full py-3.5 disabled:opacity-40 disabled:cursor-not-allowed"
       >
-        {submitting ? "Uploading..." : "Queue shipment"}
+        {submitting ? `Uploading ${uploadProgress}/${files.length}…` : "Queue shipment"}
       </button>
         </div>
 
-        <aside className="panel p-5 lg:sticky lg:top-24">
+        <aside className="panel run-summary">
           <h2 className="font-medium">Run summary</h2>
           <dl className="mt-5 space-y-4 text-sm">
             <div className="flex justify-between gap-4"><dt className="text-zinc-500">Images</dt><dd className="data-value">{files.length}</dd></div>
-            <div className="flex justify-between gap-4"><dt className="text-zinc-500">Mode</dt><dd className="capitalize">{mode}</dd></div>
+            <div className="flex justify-between gap-4"><dt>Priority</dt><dd className="capitalize">{mode}</dd></div>
+            <div className="flex justify-between gap-4"><dt>Workflow</dt><dd className="capitalize">{workflowMode}</dd></div>
             <div className="flex justify-between gap-4"><dt className="text-zinc-500">AI estimate</dt><dd className="data-value text-amber-300">{estimate == null ? "$0.00" : `$${estimate.toFixed(2)}`}</dd></div>
           </dl>
-          <div className="mt-5 pt-5 border-t border-zinc-800 text-xs text-zinc-500 leading-relaxed">
-            OpenRouter free models currently have no token charge. Account rate limits still apply.
+          <div className="summary-note">
+            Recognition uses Google AI Gemini. {workflowMode === "training" ? "Reviewed field corrections become durable operating examples." : "Production edits remain audited but do not enter training memory."}
           </div>
         </aside>
       </div>

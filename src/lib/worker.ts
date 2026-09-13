@@ -3,14 +3,15 @@
 // state machine as the original file-backed implementation, but every database
 // operation is awaited so serverless requests never hold a fake sync handle.
 // ============================================================================
-import { getDb, UPLOAD_DIR } from "./db";
+import { getDb } from "./db";
 import { getVisionClient } from "./vision";
 import { callCostUSD } from "./cost";
 import { numSetting, getSetting } from "./settings";
 import { Item, Job, JobMode } from "./types";
-import path from "path";
 import { buildFieldAssessments } from "./recognition";
 import { removeBackgroundFromStoredImage } from "./preprocess";
+import { getRecognitionContext } from "./training";
+import { getItemImage } from "./image-store";
 
 const POLL_MS = 1500;
 const CONCURRENCY = 2;
@@ -47,7 +48,37 @@ async function tick() {
   void processItem(target).catch((error) => console.error("[worker] unhandled error", error)).finally(() => { running--; });
 }
 
-async function processItem(item: Item) {
+export async function processQueueOnce(jobId?: number): Promise<boolean> {
+  if (running >= CONCURRENCY) return false;
+  const db = await getDb();
+  const client = await db.connect();
+  let target: Item | undefined;
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query<Item>(
+      `SELECT * FROM items
+       WHERE status IN ('pending','escalated') AND next_retry_at <= $1
+         AND ($2::integer IS NULL OR job_id = $2)
+       ORDER BY CASE status WHEN 'escalated' THEN 1 ELSE 0 END, id ASC
+       FOR UPDATE SKIP LOCKED LIMIT 1`,
+      [Date.now(), jobId ?? null]
+    );
+    target = rows[0];
+    if (target) await client.query("UPDATE items SET status = 'processing', updated_at = NOW() WHERE id = $1", [target.id]);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+  if (!target) return false;
+  running++;
+  try { await processItem(target, true); } finally { running--; }
+  return true;
+}
+
+async function processItem(item: Item, alreadyClaimed = false) {
   const db = await getDb();
   const { rows: jobRows } = await db.query<Job>("SELECT * FROM jobs WHERE id = $1", [item.job_id]);
   const job = jobRows[0];
@@ -55,12 +86,12 @@ async function processItem(item: Item) {
   const tier: 1 | 2 = item.status === "escalated" ? 2 : 1;
   const mode = job.mode as JobMode;
   const maxAttempts = await numSetting("max_attempts", 3);
-  await db.query("UPDATE items SET status = 'processing', updated_at = NOW() WHERE id = $1", [item.id]);
+  if (!alreadyClaimed) await db.query("UPDATE items SET status = 'processing', updated_at = NOW() WHERE id = $1", [item.id]);
   await ensureJobProcessing(job.id);
 
-  const { client } = getVisionClient({
-    tier1: await getSetting("tier1_model") ?? "qwen/qwen3-vl-235b-a22b-instruct",
-    tier2: await getSetting("tier2_model") ?? "google/gemini-3.1-pro-preview",
+  const { client, isMock } = getVisionClient({
+    tier1: await getSetting("tier1_model") ?? "gemini-2.5-flash-lite",
+    tier2: await getSetting("tier2_model") ?? "gemini-2.5-flash",
     challenger: await getSetting("challenger_model") ?? "qwen/qwen3-vl-235b-a22b-thinking",
     adjudicator: await getSetting("adjudicator_model") ?? "openai/gpt-5.4-mini",
     threshold: await numSetting("escalation_threshold", 0.8),
@@ -68,14 +99,16 @@ async function processItem(item: Item) {
 
   try {
     if (item.background_status === "pending") {
-      const background = await removeBackgroundFromStoredImage(item.image_path);
+      const background = await removeBackgroundFromStoredImage(item.id, item.image_path);
       await db.query("UPDATE items SET cutout_path = $1, background_status = $2, updated_at = NOW() WHERE id = $3",
         [background.cutoutPath, background.backgroundStatus, item.id]);
     }
-    const call = await client.tagImage(path.join(UPLOAD_DIR, item.image_path), tier);
+    const storedImage = await getItemImage(item.id);
+    if (!storedImage) throw new Error("The product image is missing from durable storage");
+    const call = await client.tagImage(storedImage.data, tier, await getRecognitionContext());
     const threshold = await numSetting("escalation_threshold", 0.8);
     const fieldReviews = JSON.stringify(buildFieldAssessments(call.result, call.model, threshold));
-    const cost = call.costUsd ?? await callCostUSD(tier, mode, call.inputTokens, call.outputTokens);
+    const cost = call.costUsd ?? (isMock ? 0 : await callCostUSD(tier, mode, call.inputTokens, call.outputTokens));
     await db.query(`INSERT INTO api_logs (item_id, job_id, tier, model, mode, input_tokens, output_tokens, cost_usd, latency_ms)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
       [item.id, item.job_id, tier, call.model, mode, call.inputTokens, call.outputTokens, cost, call.latencyMs]);

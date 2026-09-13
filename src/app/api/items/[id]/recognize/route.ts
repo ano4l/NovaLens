@@ -3,17 +3,21 @@
 // consensus pipeline. It updates one requested value only, preserves trusted
 // neighbours, revokes approval, and records both API cost and any value change.
 import { NextRequest, NextResponse } from "next/server";
-import path from "path";
-import { getDb, UPLOAD_DIR } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { getSetting, numSetting } from "@/lib/settings";
 import { getVisionClient } from "@/lib/vision";
 import { isRecognitionField, parseFieldAssessments } from "@/lib/recognition";
 import { Item, Job, JobMode, RecognitionField } from "@/lib/types";
 import { callCostUSD } from "@/lib/cost";
+import { getRecognitionContext } from "@/lib/training";
+import { getItemImage } from "@/lib/image-store";
+import { enforceRateLimit } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const limited = await enforceRateLimit(req, "recognize-field", 60);
+  if (limited) return limited;
   const { id } = await params;
   const body = await req.json() as { field?: unknown };
   if (!isRecognitionField(body.field)) return NextResponse.json({ error: "Choose a valid field to recognise" }, { status: 400 });
@@ -25,17 +29,19 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (["pending", "processing", "escalated"].includes(item.status)) return NextResponse.json({ error: "Wait for the current recognition pass to finish" }, { status: 409 });
   const { rows: jobRows } = await db.query<Job>("SELECT * FROM jobs WHERE id = $1", [item.job_id]);
   const job = jobRows[0];
-  const { client } = getVisionClient({
-    tier1: await getSetting("tier1_model") ?? "qwen/qwen3-vl-235b-a22b-instruct",
-    tier2: await getSetting("tier2_model") ?? "google/gemini-3.1-pro-preview",
+  const { client, isMock } = getVisionClient({
+    tier1: await getSetting("tier1_model") ?? "gemini-2.5-flash-lite",
+    tier2: await getSetting("tier2_model") ?? "gemini-2.5-flash",
     challenger: await getSetting("challenger_model") ?? "qwen/qwen3-vl-235b-a22b-thinking",
     adjudicator: await getSetting("adjudicator_model") ?? "openai/gpt-5.4-mini",
     threshold: await numSetting("escalation_threshold", 0.8),
   });
 
   try {
-    const call = await client.recheckField(path.join(UPLOAD_DIR, item.image_path), field);
-    const cost = call.costUsd ?? await callCostUSD(2, job.mode as JobMode, call.inputTokens, call.outputTokens);
+    const storedImage = await getItemImage(item.id);
+    if (!storedImage) return NextResponse.json({ error: "The product image is missing" }, { status: 409 });
+    const call = await client.recheckField(storedImage.data, field, await getRecognitionContext(field));
+    const cost = call.costUsd ?? (isMock ? 0 : await callCostUSD(2, job.mode as JobMode, call.inputTokens, call.outputTokens));
     await db.query(`INSERT INTO api_logs (item_id, job_id, tier, model, mode, input_tokens, output_tokens, cost_usd, latency_ms) VALUES ($1, $2, 2, $3, $4, $5, $6, $7, $8)`,
       [item.id, item.job_id, call.model, job.mode, call.inputTokens, call.outputTokens, cost, call.latencyMs]);
 

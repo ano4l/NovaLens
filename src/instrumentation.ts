@@ -5,8 +5,6 @@
 // also boots an "edge" runtime where the Node Postgres client can't load.
 // ============================================================================
 export async function register() {
-  if (process.env.NEXT_RUNTIME === "nodejs") {
-    const { startWorker } = await import("@/lib/worker");
-    startWorker();
-  }
+  // Vercel does not keep a server process alive for polling. Queue work is
+  // claimed from request-scoped `after()` tasks in the job routes instead.
 }

@@ -1,0 +1,10 @@
+.git
+.next*
+.vercel
+node_modules
+data
+.env*
+*.log
+*.tsbuildinfo
+mobile-review.png
+novalens-mobile-audit.png

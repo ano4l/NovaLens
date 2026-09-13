@@ -8,6 +8,7 @@
 import { notFound } from "next/navigation";
 import { getDb } from "@/lib/db";
 import ReviewTable from "./ReviewTable";
+import CollaborationPanel from "./CollaborationPanel";
 import { Item, Job } from "@/lib/types";
 
 // STUDY: Next tries to prerender pages at build time. force-dynamic says
@@ -41,10 +42,10 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
     <div className="space-y-7">
       <div className="flex flex-wrap items-end justify-between gap-5">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-amber-400 mb-3">Review queue</p>
+          <p className="eyebrow">Review queue</p>
           <h1 className="page-title">{job.name}</h1>
           <div className="text-sm text-zinc-500 mt-3">
-            Job {job.id} / {job.mode} / {job.image_count.toLocaleString()} images
+            Job {job.id} / {job.mode} / {job.workflow_mode} workflow / {job.image_count.toLocaleString()} images
             {job.escalation_rate != null && ` / ${(job.escalation_rate * 100).toFixed(1)}% escalated`}
           </div>
         </div>
@@ -76,7 +77,9 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
         <Stat label="Tokens" value={(cost.input_tokens + cost.output_tokens).toLocaleString()} />
       </div>
 
-      <ReviewTable jobId={job.id} initialItems={items} jobStatus={job.status} />
+      <CollaborationPanel jobId={job.id} />
+
+      <ReviewTable jobId={job.id} initialItems={items} jobStatus={job.status} workflowMode={job.workflow_mode} />
     </div>
   );
 }

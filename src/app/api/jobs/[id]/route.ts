@@ -4,10 +4,12 @@
 // request. The client polls THIS route every 3s while processing — see
 // AutoRefresh in ReviewTable.tsx.
 // ============================================================================
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
+import { processQueueOnce } from "@/lib/worker";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -15,6 +17,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   const { rows: jobRows } = await db.query("SELECT * FROM jobs WHERE id = $1", [id]);
   const job = jobRows[0];
   if (!job) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (["queued", "processing"].includes(job.status)) {
+    after(() => processQueueOnce(Number(id)).catch((error) => console.error("[queue] polling trigger failed", error)));
+  }
 
   // STUDY: The default sort encodes a PRODUCT decision in SQL: untagged items
   // first (NULL confidence), then low → medium → high. "Manager looks at the

@@ -6,15 +6,17 @@
 //           re-entering the pipeline. Same item id, new evidence.
 // ============================================================================
 import { NextRequest, NextResponse } from "next/server";
-import { getDb, UPLOAD_DIR } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { preprocessImage } from "@/lib/preprocess";
 import { Item } from "@/lib/types";
 import { validateImageFile } from "@/lib/uploads";
-import fs from "fs";
-import path from "path";
 import { isRecognitionField, parseFieldAssessments } from "@/lib/recognition";
+import { saveItemImage } from "@/lib/image-store";
+import { after } from "next/server";
+import { processQueueOnce } from "@/lib/worker";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
 // STUDY: The ALLOWLIST. Only these fields may ever be patched. Never build
 // UPDATE statements from whatever keys the client sends — that's how a client
@@ -47,6 +49,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const { rows: itemRows } = await db.query<Item>("SELECT * FROM items WHERE id = $1", [id]);
   const item = itemRows[0];
   if (!item) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const { rows: jobRows } = await db.query<{ workflow_mode: string }>("SELECT workflow_mode FROM jobs WHERE id = $1", [item.job_id]);
+  const isTraining = jobRows[0]?.workflow_mode === "training";
 
   const body = await req.json() as Record<string, unknown>;
   const updates: Record<string, unknown> = {};
@@ -111,19 +115,46 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const sets = Object.keys(updates)
     .map((k, index) => `${k} = $${index + 1}`)
     .join(", ");
-  await db.query(`UPDATE items SET ${sets}, updated_at = NOW() WHERE id = $${values.length + 1}`, [...values, item.id]);
+  let originalAiResult: Record<string, unknown> = {};
+  if (item.raw_json) {
+    try {
+      originalAiResult = JSON.parse(item.raw_json) as Record<string, unknown>;
+    } catch {
+      // Legacy rows may contain non-JSON provider output; the current value is
+      // still a truthful fallback for the correction example.
+    }
+  }
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`UPDATE items SET ${sets}, updated_at = NOW() WHERE id = $${values.length + 1}`, [...values, item.id]);
 
-  for (const e of edits) {
-    await db.query(
+    for (const e of edits) {
+      await client.query(
       "INSERT INTO edit_log (item_id, field, old_value, new_value, edited_by) VALUES ($1, $2, $3, $4, $5)",
       [item.id, e.field, e.oldVal == null ? null : String(e.oldVal), e.newVal == null ? null : String(e.newVal), typeof body.edited_by === "string" ? body.edited_by : "manager"]
-    );
-  }
-  if (confirmationLog) {
-    await db.query(
+      );
+      if (isTraining && isRecognitionField(e.field)) {
+        const previousAiValue = e.field in originalAiResult ? originalAiResult[e.field] : e.oldVal;
+        await client.query(
+          `INSERT INTO training_examples (item_id, job_id, field, previous_ai_value, corrected_value, image_path, reviewer)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [item.id, item.job_id, e.field, previousAiValue == null ? null : String(previousAiValue), e.newVal == null ? null : String(e.newVal), item.image_path, typeof body.edited_by === "string" ? body.edited_by.slice(0, 80) : "manager"]
+        );
+      }
+    }
+    if (confirmationLog) {
+      await client.query(
       "INSERT INTO edit_log (item_id, field, old_value, new_value, edited_by) VALUES ($1, $2, $3, $4, $5)",
       [item.id, `${confirmationLog.field}.review_status`, confirmationLog.oldStatus, "confirmed", typeof body.edited_by === "string" ? body.edited_by : "manager"]
-    );
+      );
+    }
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
   }
 
   const { rows: updatedRows } = await db.query("SELECT * FROM items WHERE id = $1", [item.id]);
@@ -150,6 +181,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (validationError) return NextResponse.json({ error: validationError }, { status: 400 });
   const buf = Buffer.from(await file.arrayBuffer());
   const processed = await preprocessImage(item.job_id, file.name, buf);
+  await saveItemImage(item.id, processed.image);
   await db.query(
     `UPDATE items SET image_path = $1, cutout_path = $2, background_status = $3, filename = $4, status = 'pending', tier = NULL, attempts = 0,
        next_retry_at = 0, brand = NULL, part_name = NULL, year_start = NULL, year_end = NULL,
@@ -159,14 +191,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   );
   await db.query("UPDATE jobs SET status = 'processing', updated_at = NOW() WHERE id = $1 AND status = 'review'", [item.job_id]);
 
-  const uploadRoot = `${path.resolve(UPLOAD_DIR)}${path.sep}`;
-  for (const storedPath of [item.image_path, item.cutout_path]) {
-    if (!storedPath) continue;
-    const oldPath = path.resolve(UPLOAD_DIR, storedPath);
-    if (oldPath.startsWith(uploadRoot) && ![processed.relPath, processed.cutoutPath].includes(storedPath)) {
-      fs.rmSync(oldPath, { force: true });
-    }
-  }
-
+  after(() => processQueueOnce(item.job_id).catch((error) => console.error("[queue] re-photo processing failed", error)));
   return NextResponse.json({ ok: true });
 }

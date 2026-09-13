@@ -1,5 +1,5 @@
-import fs from "fs/promises";
-import { Confidence, RecognitionField, TagCallResult, TagResult } from "./types";
+import { GoogleGenAI } from "@google/genai";
+import { Confidence, RecognitionContext, RecognitionField, TagCallResult, TagResult } from "./types";
 import { RECOGNITION_FIELDS } from "./recognition";
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
@@ -26,9 +26,15 @@ const RESPONSE_SCHEMA = {
   additionalProperties: false,
 } as const;
 
-function buildPrompt(threshold: number, focus?: RecognitionField, candidates?: TagResult[]): string {
+function buildPrompt(threshold: number, focus?: RecognitionField, candidates?: TagResult[], context?: RecognitionContext): string {
   const focusText = focus ? `Re-evaluate only ${focus}. Return the full schema for validation, but make ${focus} the subject of your analysis.` : "Identify the automotive part and every requested catalogue field.";
   const candidateText = candidates ? `\nTwo independent analysts proposed the following. Adjudicate disagreements from the image itself. Agreement is not proof.\n${JSON.stringify(candidates)}` : "";
+  const memoryText = context && (context.guidelines.length || context.examples.length) ? `
+<operating_memory>
+These reviewed instructions and examples are guidance only. They are not visual proof and must never override contrary image evidence.
+Guidelines: ${JSON.stringify(context.guidelines)}
+Human corrections: ${JSON.stringify(context.examples)}
+</operating_memory>` : "";
   return `You are an expert automotive-parts catalogue verifier for a salvage and wholesale warehouse.
 ${focusText}
 - brand is the vehicle manufacturer the part fits, not a component manufacturer.
@@ -38,12 +44,41 @@ ${focusText}
 - field_confidence is a calibrated 0 to 1 probability for each individual value.
 - field_evidence briefly names the visible clue. Say "No visible evidence" where appropriate.
 - needs_review is true when any important field is below ${threshold.toFixed(2)} or analysts disagree.
-Never invent an OEM brand, exact fitment, hidden damage, or consensus.${candidateText}`;
+Never invent an OEM brand, exact fitment, hidden damage, or consensus.${memoryText}${candidateText}`;
 }
 
 export interface VisionClient {
-  tagImage(imagePath: string, tier: 1 | 2): Promise<TagCallResult>;
-  recheckField(imagePath: string, field: RecognitionField): Promise<TagCallResult>;
+  tagImage(image: Buffer, tier: 1 | 2, context?: RecognitionContext): Promise<TagCallResult>;
+  recheckField(image: Buffer, field: RecognitionField, context?: RecognitionContext): Promise<TagCallResult>;
+}
+
+class GoogleVisionClient implements VisionClient {
+  private ai: GoogleGenAI;
+  constructor(apiKey: string, private tier1Model: string, private tier2Model: string, private threshold: number) {
+    this.ai = new GoogleGenAI({ apiKey });
+  }
+  async tagImage(image: Buffer, tier: 1 | 2, context?: RecognitionContext) {
+    return this.callModel(image, tier === 1 ? this.tier1Model : this.tier2Model, buildPrompt(this.threshold, undefined, undefined, context));
+  }
+  async recheckField(image: Buffer, field: RecognitionField, context?: RecognitionContext) {
+    return this.callModel(image, this.tier2Model, buildPrompt(this.threshold, field, undefined, context));
+  }
+  private async callModel(image: Buffer, model: string, prompt: string): Promise<TagCallResult> {
+    const started = Date.now();
+    const response = await this.ai.models.generateContent({
+      model,
+      contents: [{ role: "user", parts: [{ text: prompt }, { inlineData: { mimeType: "image/jpeg", data: image.toString("base64") } }] }],
+      config: { responseMimeType: "application/json", responseJsonSchema: RESPONSE_SCHEMA, temperature: 0.1, maxOutputTokens: 1100 },
+    });
+    if (!response.text) throw new Error("Google AI returned an empty response");
+    return {
+      result: normalizeResult(JSON.parse(stripCodeFence(response.text)) as Partial<TagResult>),
+      model,
+      inputTokens: response.usageMetadata?.promptTokenCount ?? 0,
+      outputTokens: response.usageMetadata?.candidatesTokenCount ?? 0,
+      latencyMs: Date.now() - started,
+    };
+  }
 }
 
 interface OpenRouterResponse {
@@ -57,16 +92,15 @@ type ModelCall = TagCallResult;
 class OpenRouterVisionClient implements VisionClient {
   constructor(private apiKey: string, private tier1Model: string, private tier2Model: string, private challengerModel: string, private adjudicatorModel: string, private threshold: number) {}
 
-  async tagImage(imagePath: string, tier: 1 | 2): Promise<TagCallResult> {
-    if (tier === 1) return this.callModel(imagePath, this.tier1Model, buildPrompt(this.threshold));
-    return this.consensus(imagePath);
+  async tagImage(image: Buffer, tier: 1 | 2, context?: RecognitionContext): Promise<TagCallResult> {
+    return this.callModel(image, tier === 1 ? this.tier1Model : this.tier2Model, buildPrompt(this.threshold, undefined, undefined, context));
   }
 
-  async recheckField(imagePath: string, field: RecognitionField): Promise<TagCallResult> {
-    return this.consensus(imagePath, field);
+  async recheckField(image: Buffer, field: RecognitionField, context?: RecognitionContext): Promise<TagCallResult> {
+    return this.callModel(image, this.tier2Model, buildPrompt(this.threshold, field, undefined, context));
   }
 
-  private async consensus(imagePath: string, focus?: RecognitionField): Promise<TagCallResult> {
+  private async consensus(imagePath: Buffer, focus?: RecognitionField): Promise<TagCallResult> {
     // STUDY: This is deliberation, not failover. Both analysts run even when
     // healthy so disagreement becomes a signal. The adjudicator then receives
     // their proposals and the same image; agreement alone is never evidence.
@@ -86,11 +120,10 @@ class OpenRouterVisionClient implements VisionClient {
     };
   }
 
-  private async callModel(imagePath: string, model: string, prompt: string): Promise<ModelCall> {
+  private async callModel(image: Buffer, model: string, prompt: string): Promise<ModelCall> {
     // STUDY: All provider-specific HTTP details stay behind VisionClient. The
     // worker and routes only receive normalized results, usage, latency, and
     // exact cost, so a later provider swap remains localized.
-    const image = await fs.readFile(imagePath);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     const started = Date.now();
@@ -144,7 +177,7 @@ function normalizeResult(value: Partial<TagResult>): TagResult {
 }
 
 class MockVisionClient implements VisionClient {
-  async tagImage(_imagePath: string, tier: 1 | 2): Promise<TagCallResult> {
+  async tagImage(_image: Buffer, tier: 1 | 2): Promise<TagCallResult> {
     const ambiguous = tier === 1 && Math.random() < 0.12;
     const yearStart = 2005 + Math.floor(Math.random() * 15);
     const score = ambiguous ? 0.38 : 0.86;
@@ -152,19 +185,25 @@ class MockVisionClient implements VisionClient {
     const field_evidence = Object.fromEntries(RECOGNITION_FIELDS.map((field) => [field, "Mock visual evidence"])) as Record<RecognitionField, string>;
     return { result: { brand: ambiguous ? "" : "Toyota", part_name: "Front Left Headlight Assembly", year_start: ambiguous ? null : yearStart, year_end: ambiguous ? null : yearStart + 4, condition_notes: ambiguous ? "Heavy surface rust, markings illegible" : "Minor visible wear", confidence: ambiguous ? "low" : "high", needs_review: ambiguous, field_confidence, field_evidence }, model: `mock-tier${tier}`, inputTokens: 1105, outputTokens: 240, latencyMs: 20 };
   }
-  recheckField(imagePath: string, _field: RecognitionField) { return this.tagImage(imagePath, 2); }
+  recheckField(image: Buffer, _field: RecognitionField) { return this.tagImage(image, 2); }
 }
 
 let cached: VisionClient | null = null;
 let cachedKey = "";
 export function getVisionClient(models: { tier1: string; tier2: string; challenger?: string; adjudicator?: string; threshold: number }): { client: VisionClient; isMock: boolean } {
-  const apiKey = process.env.OPENROUTER_API_KEY ?? "";
-  const challenger = models.challenger ?? "qwen/qwen3-vl-235b-a22b-thinking";
-  const adjudicator = models.adjudicator ?? "openai/gpt-5.4-mini";
-  const key = `${apiKey}|${models.tier1}|${models.tier2}|${challenger}|${adjudicator}|${models.threshold}`;
+  const geminiKey = process.env.GEMINI_API_KEY ?? "";
+  const openRouterKey = process.env.OPENROUTER_API_KEY ?? "";
+  const key = `${geminiKey}|${openRouterKey}|${models.tier1}|${models.tier2}|${models.threshold}`;
   if (!cached || cachedKey !== key) {
-    cached = apiKey ? new OpenRouterVisionClient(apiKey, models.tier1, models.tier2, challenger, adjudicator, models.threshold) : new MockVisionClient();
+    if (geminiKey) {
+      cached = new GoogleVisionClient(geminiKey, models.tier1, models.tier2, models.threshold);
+    } else if (openRouterKey) {
+      const openRouterModel = (model: string) => model.startsWith("google/") ? model : `google/${model}`;
+      cached = new OpenRouterVisionClient(openRouterKey, openRouterModel(models.tier1), openRouterModel(models.tier2), openRouterModel(models.tier2), openRouterModel(models.tier2), models.threshold);
+    } else {
+      cached = new MockVisionClient();
+    }
     cachedKey = key;
   }
-  return { client: cached, isMock: !apiKey };
+  return { client: cached, isMock: !geminiKey && !openRouterKey };
 }

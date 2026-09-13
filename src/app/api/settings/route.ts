@@ -12,8 +12,6 @@ export const runtime = "nodejs";
 const EDITABLE_KEYS = new Set([
   "tier1_model",
   "tier2_model",
-  "challenger_model",
-  "adjudicator_model",
   "escalation_threshold",
   "tier1_input_rate",
   "tier1_output_rate",
@@ -54,8 +52,8 @@ export async function PUT(req: NextRequest) {
     if (!EDITABLE_KEYS.has(k) || typeof v !== "string") continue;
     const cleanValue = v.trim();
     if (k.endsWith("_model")) {
-      if (!/^[a-z0-9_.-]+\/[a-z0-9_.:-]+$/i.test(cleanValue)) {
-        return NextResponse.json({ error: `${k} is not a valid OpenRouter model ID` }, { status: 400 });
+      if (!/^gemini-[a-z0-9_.-]+$/i.test(cleanValue)) {
+        return NextResponse.json({ error: `${k} is not a valid Gemini model ID` }, { status: 400 });
       }
     } else if (BOUNDS[k]) {
       const value = Number(cleanValue);

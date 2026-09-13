@@ -1,0 +1,38 @@
+import { getDb } from "@/lib/db";
+import { TrainingExample, TrainingGuideline } from "@/lib/types";
+import TrainingConsole from "./TrainingConsole";
+
+export const dynamic = "force-dynamic";
+
+export default async function TrainingPage() {
+  const db = await getDb();
+  const [guidelines, examples, jobs] = await Promise.all([
+    db.query<TrainingGuideline>("SELECT * FROM training_guidelines ORDER BY active DESC, priority DESC, updated_at DESC"),
+    db.query<TrainingExample>(`SELECT e.*, j.name AS job_name FROM training_examples e LEFT JOIN jobs j ON j.id=e.job_id ORDER BY e.created_at DESC LIMIT 250`),
+    db.query<{ count: number }>("SELECT COUNT(*)::int AS count FROM jobs WHERE workflow_mode='training'"),
+  ]);
+  const covered = new Set(examples.rows.map((example) => example.field)).size;
+  return (
+    <div className="page-stack">
+      <header className="page-heading">
+        <div><p className="eyebrow">Operating memory</p><h1>Training mode</h1><p>Turn reviewed decisions into consistent operating guidance for future recognition runs.</p></div>
+        <a href="/upload?workflow=training" className="primary-button px-4 py-3">Start training batch</a>
+      </header>
+      <section className="kpi-strip" aria-label="Training metrics">
+        <Metric label="Active guidelines" value={String(guidelines.rows.filter((g) => g.active).length)} />
+        <Metric label="Saved corrections" value={String(examples.rows.length)} />
+        <Metric label="Training batches" value={String(jobs.rows[0]?.count ?? 0)} />
+        <Metric label="Field coverage" value={`${covered}/5`} />
+      </section>
+      <TrainingConsole initialGuidelines={guidelines.rows} initialExamples={examples.rows} />
+      <section className="memory-disclosure">
+        <strong>How memory is used</strong>
+        <p>NovaLens sends active instructions and a bounded set of relevant human corrections to Gemini with each recognition request. They guide the model but never count as visual evidence. This is instruction-and-example learning, not provider-side fine-tuning.</p>
+      </section>
+    </div>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return <div><span>{label}</span><strong className="data-value">{value}</strong></div>;
+}

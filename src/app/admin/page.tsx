@@ -3,36 +3,30 @@
 import { useEffect, useState } from "react";
 
 const MODEL_OPTIONS = [
-  { id: "qwen/qwen3-vl-235b-a22b-instruct", label: "Qwen3 VL 235B Instruct", note: "Visual detail and markings" },
-  { id: "qwen/qwen3-vl-235b-a22b-thinking", label: "Qwen3 VL 235B Thinking", note: "Independent visual reasoning" },
-  { id: "google/gemini-3.1-pro-preview", label: "Gemini 3.1 Pro Preview", note: "Frontier multimodal analyst" },
-  { id: "openai/gpt-5.4-mini", label: "GPT-5.4 Mini", note: "Cost-controlled adjudicator" },
-  { id: "dots-studio/dots-3-note-preview:free", label: "Dots3 Note Preview", note: "Free prototype model" },
-  { id: "openrouter/free", label: "OpenRouter Free Router", note: "Random free availability route" },
+  { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash-Lite", note: "Stable high-volume recognition" },
+  { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", note: "Stable higher-quality rechecks" },
 ];
 
 const GROUPS = [
   {
-    title: "Routing",
-    description: "Tier 1 handles routine images. Escalations use two independent analysts and an adjudicator.",
+    title: "Recognition routing",
+    description: "Tier 1 handles routine images. Tier 2 performs higher-quality escalations and field rechecks through Google AI.",
     fields: [
       { key: "tier1_model", label: "Tier 1 model", kind: "model" },
       { key: "tier2_model", label: "Tier 2 model", kind: "model" },
-      { key: "challenger_model", label: "Independent challenger", kind: "model" },
-      { key: "adjudicator_model", label: "Consensus adjudicator", kind: "model" },
       { key: "escalation_threshold", label: "Escalation threshold", hint: "0 to 1. Higher sends more uncertain items to Tier 2." },
       { key: "max_attempts", label: "Attempts per image", hint: "1 to 10 before manual review." },
     ],
   },
   {
     title: "Cost model",
-    description: "These rates drive forecasts. Actual charged cost is captured from each OpenRouter response.",
+    description: "These rates drive internal forecasts for Google AI recognition usage.",
     fields: [
       { key: "tier1_input_rate", label: "Tier 1 input / 1M tokens" },
       { key: "tier1_output_rate", label: "Tier 1 output / 1M tokens" },
       { key: "tier2_input_rate", label: "Tier 2 input / 1M tokens" },
       { key: "tier2_output_rate", label: "Tier 2 output / 1M tokens" },
-      { key: "batch_discount", label: "Batch discount", hint: "0 for free models; 0.5 means a 50% discount." },
+      { key: "batch_discount", label: "Batch discount", hint: "Keep at 0 for synchronous calls; use 0.5 only when the Gemini Batch API is actually enabled." },
     ],
   },
   {
@@ -90,10 +84,8 @@ export default function AdminPage() {
   const applyQualityConsensus = () => {
     setSettings((current) => ({
       ...current,
-      tier1_model: "qwen/qwen3-vl-235b-a22b-instruct",
-      tier2_model: "google/gemini-3.1-pro-preview",
-      challenger_model: "qwen/qwen3-vl-235b-a22b-thinking",
-      adjudicator_model: "openai/gpt-5.4-mini",
+      tier1_model: "gemini-2.5-flash-lite",
+      tier2_model: "gemini-2.5-flash",
     }));
     setState("idle");
   };
@@ -102,8 +94,8 @@ export default function AdminPage() {
     <div className="max-w-5xl mx-auto space-y-8">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-5">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-amber-400 mb-3">System controls</p>
-          <h1 className="page-title">Pipeline configuration</h1>
+          <p className="eyebrow">System controls</p>
+          <h1 className="page-title">Recognition settings</h1>
           <p className="page-intro mt-3">Model routing, forecasts, retry policy, and safety thresholds. Changes apply to the next model call.</p>
         </div>
         <button onClick={save} disabled={state === "loading" || state === "saving"} className="primary-button px-5 py-2.5 disabled:opacity-50">
@@ -115,8 +107,8 @@ export default function AdminPage() {
 
       <section className="panel p-5 sm:p-6 flex flex-col sm:flex-row gap-4 sm:items-center sm:justify-between">
         <div>
-          <h2 className="font-medium">Recommended quality consensus</h2>
-          <p className="text-sm text-zinc-500 mt-1 max-w-2xl">Qwen handles fine visual detail, Gemini challenges the identification, and GPT adjudicates disagreements. Exact charged cost is recorded from OpenRouter.</p>
+          <h2 className="font-medium">Recommended Gemini pairing</h2>
+          <p className="text-sm text-zinc-500 mt-1 max-w-2xl">Direct Google AI recognition keeps the provider secret server-side and uses stable Gemini models for routine and escalated work.</p>
         </div>
         <button type="button" onClick={applyQualityConsensus} className="secondary-button px-4 py-2.5 text-sm">Apply pairing</button>
       </section>
@@ -150,8 +142,8 @@ export default function AdminPage() {
 
       <div className="panel p-5 sm:p-6 flex flex-col sm:flex-row gap-4 sm:items-center sm:justify-between">
         <div>
-          <h2 className="font-medium">OpenRouter connection</h2>
-          <p className="text-sm text-zinc-500 mt-1">Set <code className="text-amber-300">OPENROUTER_API_KEY</code> in <code className="text-amber-300">.env</code>. Without it, NovaLens safely uses mock results.</p>
+          <h2 className="font-medium">Google AI connection</h2>
+          <p className="text-sm text-zinc-500 mt-1">Set <code>GEMINI_API_KEY</code> in the server environment. Without it, NovaLens safely uses mock results. The key is never sent to the browser.</p>
         </div>
         <span className="self-start sm:self-auto rounded-full border border-zinc-700 px-3 py-1 text-xs text-zinc-400">Server-side secret</span>
       </div>
@@ -159,7 +151,7 @@ export default function AdminPage() {
       <div className="panel p-5 sm:p-6 flex flex-col sm:flex-row gap-4 sm:items-center sm:justify-between">
         <div>
           <h2 className="font-medium">Background removal</h2>
-          <p className="text-sm text-zinc-500 mt-1">Set <code className="text-amber-300">REMOVE_BG_API_KEY</code> to create a transparent cutout and a clean white-background image at upload time.</p>
+          <p className="text-sm text-zinc-500 mt-1">Set <code className="text-amber-300">OPENROUTER_API_KEY</code> to use Nano Banana 2 Lite first, then Nano Banana 2 as a fallback. NovaLens stores a transparent cutout and a clean white-background image.</p>
         </div>
         <span className="self-start sm:self-auto rounded-full border border-zinc-700 px-3 py-1 text-xs text-zinc-400">Optional provider</span>
       </div>
