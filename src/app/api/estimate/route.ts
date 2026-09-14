@@ -14,5 +14,7 @@ export async function GET(req: NextRequest) {
   const rawCount = Number(req.nextUrl.searchParams.get("count") ?? 0);
   const count = Number.isFinite(rawCount) ? Math.min(100, Math.max(0, Math.floor(rawCount))) : 0;
   const mode = (req.nextUrl.searchParams.get("mode") === "express" ? "express" : "batch") as JobMode;
-  return NextResponse.json({ count, mode, estCostUsd: estimateJobCostUSD(count, mode) });
+  const estCostUsd = await estimateJobCostUSD(count, mode);
+  const response: { count: number; mode: JobMode; estCostUsd: number } = { count, mode, estCostUsd };
+  return NextResponse.json(response);
 }

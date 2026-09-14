@@ -22,6 +22,7 @@ export default function UploadPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [estimate, setEstimate] = useState<number | null>(null);
+  const [estimateUnavailable, setEstimateUnavailable] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
 
   useEffect(() => {
@@ -33,11 +34,24 @@ export default function UploadPage() {
   const refreshEstimate = useCallback(async (count: number, m: string) => {
     if (count === 0) {
       setEstimate(null);
+      setEstimateUnavailable(false);
       return;
     }
-    const res = await fetch(`/api/estimate?count=${count}&mode=${m}`);
-    const data = await res.json();
-    setEstimate(data.estCostUsd);
+    try {
+      const res = await fetch(`/api/estimate?count=${count}&mode=${m}`);
+      if (!res.ok) throw new Error("Estimate request failed");
+      const data = await res.json() as { estCostUsd?: unknown };
+      if (typeof data.estCostUsd !== "number" || !Number.isFinite(data.estCostUsd)) {
+        throw new Error("Estimate response was invalid");
+      }
+      setEstimate(data.estCostUsd);
+      setEstimateUnavailable(false);
+    } catch {
+      // Cost preview is helpful but must never make image selection or upload
+      // unusable when the database or estimate endpoint is temporarily down.
+      setEstimate(null);
+      setEstimateUnavailable(true);
+    }
   }, []);
 
   const addFiles = useCallback(
@@ -187,6 +201,7 @@ export default function UploadPage() {
             onClick={() => {
               setFiles([]);
               setEstimate(null);
+              setEstimateUnavailable(false);
             }}
             className="text-sm text-zinc-400 hover:text-red-400"
           >
@@ -212,7 +227,7 @@ export default function UploadPage() {
             <div className="flex justify-between gap-4"><dt className="text-zinc-500">Images</dt><dd className="data-value">{files.length}</dd></div>
             <div className="flex justify-between gap-4"><dt>Priority</dt><dd className="capitalize">{mode}</dd></div>
             <div className="flex justify-between gap-4"><dt>Workflow</dt><dd className="capitalize">{workflowMode}</dd></div>
-            <div className="flex justify-between gap-4"><dt className="text-zinc-500">AI estimate</dt><dd className="data-value text-amber-300">{estimate == null ? "$0.00" : `$${estimate.toFixed(2)}`}</dd></div>
+            <div className="flex justify-between gap-4"><dt className="text-zinc-500">AI estimate</dt><dd className="data-value text-amber-300">{estimateUnavailable ? "Unavailable" : estimate == null ? "$0.00" : `$${estimate.toFixed(2)}`}</dd></div>
           </dl>
           <div className="summary-note">
             Recognition uses Google AI Gemini. {workflowMode === "training" ? "Reviewed field corrections become durable operating examples." : "Production edits remain audited but do not enter training memory."}
