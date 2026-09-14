@@ -57,6 +57,28 @@ export interface Job {
 }
 
 export type TrainingGuidelineKind = "cataloguing" | "fitment" | "condition" | "brand" | "safety" | "general";
+export type UploadFeedbackCategory =
+  | "photo_quality"
+  | "wrong_identification"
+  | "brand_model_ambiguity"
+  | "fitment_years"
+  | "condition_assessment"
+  | "other";
+
+export interface UploadFeedback {
+  id: number;
+  job_id: number;
+  item_id: number | null;
+  category: UploadFeedbackCategory;
+  note: string;
+  status: "active" | "resolved";
+  submitted_by: string;
+  created_at: string;
+  updated_at: string;
+  job_name?: string | null;
+  filename?: string | null;
+}
+
 export interface TrainingGuideline {
   id: number;
   title: string;
@@ -84,6 +106,7 @@ export interface TrainingExample {
 export interface RecognitionContext {
   guidelines: Array<Pick<TrainingGuideline, "title" | "instruction" | "kind" | "priority">>;
   examples: Array<Pick<TrainingExample, "field" | "previous_ai_value" | "corrected_value">>;
+  operatorFeedback: Array<Pick<UploadFeedback, "category" | "note">>;
 }
 
 export interface Item {
@@ -92,7 +115,7 @@ export interface Item {
   filename: string;
   image_path: string;
   cutout_path: string | null;
-  background_status: "pending" | "removed" | "not_configured" | "failed" | "legacy";
+  background_status: "ready" | "pending" | "removed" | "not_configured" | "failed" | "legacy";
   status: ItemStatus;
   // STUDY: Everything below `status` is nullable because the AI may not know
   // (or may not have run yet). `null` here means "unknown", not "empty" — an

@@ -12,16 +12,6 @@ export async function saveItemImage(itemId: number, image: Buffer, contentType =
   );
 }
 
-export async function saveProcessedImages(itemId: number, recognitionImage: Buffer, cutout: Buffer) {
-  const db = await getDb();
-  await db.query(
-    `UPDATE item_images SET image_data = $1, image_content_type = 'image/jpeg',
-       cutout_data = $2, cutout_content_type = 'image/png', updated_at = NOW()
-     WHERE item_id = $3`,
-    [recognitionImage, cutout, itemId]
-  );
-}
-
 export async function getItemImage(itemId: number, cutout = false): Promise<{ data: Buffer; contentType: string } | null> {
   const db = await getDb();
   const column = cutout ? "cutout_data" : "image_data";

@@ -147,13 +147,6 @@ export default function AdminPage() {
         <span className="self-start sm:self-auto rounded-full border border-zinc-700 px-3 py-1 text-xs text-zinc-400">Server-side secret</span>
       </div>
 
-      <div className="panel p-5 sm:p-6 flex flex-col sm:flex-row gap-4 sm:items-center sm:justify-between">
-        <div>
-          <h2 className="font-medium">Background removal</h2>
-          <p className="text-sm text-zinc-500 mt-1">Set <code className="text-amber-300">OPENROUTER_API_KEY</code> to use Nano Banana 2 Lite first, then Nano Banana 2 as a fallback. NovaLens stores a transparent cutout and a clean white-background image.</p>
-        </div>
-        <span className="self-start sm:self-auto rounded-full border border-zinc-700 px-3 py-1 text-xs text-zinc-400">Optional provider</span>
-      </div>
     </div>
   );
 }

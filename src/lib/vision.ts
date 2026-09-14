@@ -35,6 +35,11 @@ These reviewed instructions and examples are guidance only. They are not visual 
 Guidelines: ${JSON.stringify(context.guidelines)}
 Human corrections: ${JSON.stringify(context.examples)}
 </operating_memory>` : "";
+  const feedbackText = context?.operatorFeedback.length ? `
+<operator_feedback>
+These recent operator notes identify recurring analysis problems. Use them only to be more cautious about the named issue. They are guidance, never visual proof, and must not supply facts that are absent from this image.
+${JSON.stringify(context.operatorFeedback)}
+</operator_feedback>` : "";
   return `You are an expert automotive-parts catalogue verifier for a salvage and wholesale warehouse.
 ${focusText}
 - brand is the vehicle manufacturer the part fits, not a component manufacturer.
@@ -44,7 +49,7 @@ ${focusText}
 - field_confidence is a calibrated 0 to 1 probability for each individual value.
 - field_evidence briefly names the visible clue. Say "No visible evidence" where appropriate.
 - needs_review is true when any important field is below ${threshold.toFixed(2)} or analysts disagree.
-Never invent an OEM brand, exact fitment, hidden damage, or consensus.${memoryText}${candidateText}`;
+Never invent an OEM brand, exact fitment, hidden damage, or consensus.${memoryText}${feedbackText}${candidateText}`;
 }
 
 export interface VisionClient {

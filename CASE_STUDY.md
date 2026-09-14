@@ -15,11 +15,9 @@ It implements a real-world pattern you will meet again and again in your career:
 3. Try the exercises at the end of each section. They are ordered from "change a
    string" to "design a new feature."
 
-You do not need an OpenRouter or background-removal key to study the project.
-Without `OPENROUTER_API_KEY`, a **mock vision client** keeps the recognition and
-review pipeline usable offline. Without `REMOVE_BG_API_KEY`, uploads are still
-normalized onto white, but the UI truthfully reports that no transparent cutout
-was produced.
+You do not need a provider key to study the project. Without `GEMINI_API_KEY`
+or the optional `OPENROUTER_API_KEY` recognition fallback, a **mock vision
+client** keeps the recognition and review pipeline usable offline.
 
 ```bash
 npm install
@@ -45,14 +43,12 @@ defining design decision is **cost-aware routing with consensus escalation**:
   quality preset. The best production mix must still be measured on labelled parts.
 
 ```
-Browser ──upload──▶ validate + normalize ──▶ Supabase Postgres queue + private disk
+Browser ──upload──▶ validate + normalize ──▶ Supabase Postgres image + queue
                                                    │
                                       worker loop (polls every 1.5s)
                                                    │
-                            queued background isolation when configured
-                                  │ transparent PNG + white JPEG
                                   ▼
-                           Tier 1 structured vision call
+                        Tier 1 structured vision call
                                   │ needs_review?
                      no ──────────┴────────── yes
                      ▼                         ▼
@@ -82,7 +78,7 @@ Read in this order. Each step builds on the vocabulary of the previous one.
 | 1 | `src/lib/types.ts` | Modeling a domain with TypeScript: string-literal unions as a state machine, nullable fields as "unknown from the AI" |
 | 2 | `src/lib/db.ts` | Supabase Postgres in Node, idempotent schema creation, indexes, and pooled connections |
 | 3 | `src/lib/settings.ts` | Runtime configuration: why tunables live in a DB table, not in code |
-| 4 | `src/lib/preprocess.ts` | Fast upload normalization plus queued background isolation and white-background composition |
+| 4 | `src/lib/preprocess.ts` | Fast upload normalization for durable, analysis-ready images |
 | 5 | `src/lib/cost.ts` | Turning pricing into pure functions: cost as data, config-driven formulas |
 | 6 | `src/lib/vision.ts` | OpenRouter structured output, parallel analysts, adjudication, targeted field rechecks, and the mock-client pattern |
 | 7 | `src/lib/recognition.ts` | Turning model confidence and evidence into durable per-field review states |
@@ -93,11 +89,12 @@ Read in this order. Each step builds on the vocabulary of the previous one.
 | 12 | `src/app/api/items/[id]/recognize/route.ts` | Re-running one field through consensus without overwriting the rest |
 | 13 | `src/app/api/jobs/[id]/bulk/route.ts` | Bulk operations parameterized safely (`?` placeholders, no string interpolation of values) |
 | 14 | `src/app/api/jobs/[id]/export/route.ts` | One source of truth, three output formats (generic/Shopify/WooCommerce CSV) |
-| 15 | `src/app/api/images/[id]/route.ts` | Serving white-background and transparent variants with a path-traversal guard |
+| 15 | `src/app/api/images/[id]/route.ts` | Serving private durable images, with read compatibility for legacy cutouts |
 | 16 | `src/app/page.tsx` + `src/app/jobs/[id]/page.tsx` | React Server Components: rendering straight from the DB, no client fetch needed |
 | 17 | `src/app/jobs/[id]/ReviewTable.tsx` | Mobile-first selection, field evidence, edits, confirmation, retries, and polling |
 | 18 | `src/app/upload/page.tsx` + `src/app/admin/page.tsx` | Forms, model-pairing presets, and controlled inputs |
 | 19 | `src/app/api/settings/route.ts` + `src/app/api/estimate/route.ts` | Small routes with allowlists and pure-function responses |
+| 20 | `src/app/api/jobs/[id]/feedback/route.ts` | Validated operator feedback, job ownership checks, and bounded Training guidance |
 
 ---
 
@@ -128,19 +125,14 @@ needs_manual   (dead-letter: surfaced to a human, never retried automatically)
   without it? (Hint: think about a Tier-1 call that fails *after* the item was
   escalated in a previous life.)
 
-### 3.2 Background isolation belongs in the worker
+### 3.2 Normalize once, analyse the source image
 
 `preprocessImage()` deliberately does only the bounded work needed to accept an
-upload: validate, rotate, resize, flatten onto white, encode, and save. If a
-background-removal key exists, the item receives `background_status = pending`.
-The worker later calls `removeBackgroundFromStoredImage()` before recognition.
-
-This separation matters. A request may contain 100 files; making 100 external
-segmentation calls before returning the upload response would create a slow and
-fragile request. The queue already owns retries and bounded concurrency, so it
-is the right place for optional external image processing. A successful pass
-stores both a transparent PNG and a white-background JPEG. Failure leaves the
-normalized image usable and records `failed` instead of pretending it succeeded.
+upload: validate, rotate, resize, encode, and save. The worker sends that durable
+normalized image directly to recognition. This keeps image evidence faithful,
+avoids a second image-generation charge, and ensures initial uploads and
+replacement photos follow the same analysis path. Legacy cutout columns remain
+readable for older jobs, but new processing does not create or depend on them.
 
 ### 3.3 The mock client pattern
 
@@ -281,7 +273,7 @@ Real production code would differ — by design here, for clarity:
 | GCS + signed URLs | local `data/uploads` | runs anywhere, no cloud account |
 | Cloud Tasks / Pub/Sub | Postgres polling worker | one process, no infra |
 | Object storage | Local upload directory | Vercel filesystem is ephemeral |
-| Background removal | queued remove.bg call with local files | swap the provider boundary or self-host segmentation for scale and data-residency needs |
+| Operator learning | bounded recent feedback plus curated corrections | add moderation and promotion states before allowing wider teams to influence prompts |
 | Model evaluation | configurable consensus with field evidence | benchmark pairings on a labelled warehouse dataset before claiming production accuracy |
 | Real Batch API | per-item calls plus configurable estimate discount | keeps the worker state machine easy to inspect |
 | Auth / multi-tenant | none | not the lesson here — but Exercise 8 makes you add it |

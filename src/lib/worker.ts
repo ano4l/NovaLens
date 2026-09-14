@@ -9,7 +9,6 @@ import { callCostUSD } from "./cost";
 import { numSetting, getSetting } from "./settings";
 import { Item, Job, JobMode } from "./types";
 import { buildFieldAssessments } from "./recognition";
-import { removeBackgroundFromStoredImage } from "./preprocess";
 import { getRecognitionContext } from "./training";
 import { getItemImage } from "./image-store";
 
@@ -98,11 +97,6 @@ async function processItem(item: Item, alreadyClaimed = false) {
   });
 
   try {
-    if (item.background_status === "pending") {
-      const background = await removeBackgroundFromStoredImage(item.id, item.image_path);
-      await db.query("UPDATE items SET cutout_path = $1, background_status = $2, updated_at = NOW() WHERE id = $3",
-        [background.cutoutPath, background.backgroundStatus, item.id]);
-    }
     const storedImage = await getItemImage(item.id);
     if (!storedImage) throw new Error("The product image is missing from durable storage");
     const call = await client.tagImage(storedImage.data, tier, await getRecognitionContext());

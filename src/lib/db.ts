@@ -95,6 +95,15 @@ async function migrate(db: Pool) {
     );
     CREATE INDEX IF NOT EXISTS idx_training_examples_field_created ON training_examples(field, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_training_examples_job ON training_examples(job_id);
+    CREATE TABLE IF NOT EXISTS upload_feedback (
+      id SERIAL PRIMARY KEY, job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+      item_id INTEGER REFERENCES items(id) ON DELETE SET NULL, category TEXT NOT NULL,
+      note TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active',
+      submitted_by TEXT NOT NULL DEFAULT 'operator', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_upload_feedback_created ON upload_feedback(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_upload_feedback_job ON upload_feedback(job_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_request_limits_window ON request_limits(window_started);
     ALTER TABLE jobs ADD COLUMN IF NOT EXISTS workflow_mode TEXT NOT NULL DEFAULT 'production';
     ALTER TABLE items ADD COLUMN IF NOT EXISTS cutout_path TEXT;

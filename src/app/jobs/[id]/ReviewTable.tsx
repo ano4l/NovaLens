@@ -19,6 +19,7 @@ import { useState, useMemo, useRef, useEffect } from "react";
 import { FieldAssessment, Item, RecognitionField } from "@/lib/types";
 import { parseFieldAssessments } from "@/lib/recognition";
 import { prepareUploadFile } from "@/lib/client-image";
+import RecognitionFeedback from "./RecognitionFeedback";
 
 const CONF_STYLE: Record<string, string> = {
   high: "border-emerald-800 text-emerald-300 bg-emerald-950/30",
@@ -231,6 +232,8 @@ export default function ReviewTable({
         <Pulse label="Metadata" value={`${metadataCompletion}%`} detail="brand and part complete" />
       </section>
 
+      <RecognitionFeedback jobId={jobId} items={items} />
+
       <div className="review-filter-rail-wrap">
       <div className="review-filter-rail" role="group" aria-label="Filter review queue">
         {STATUS_FILTERS.map((f) => (
@@ -411,10 +414,9 @@ export default function ReviewTable({
                 <span>Open full image</span>
               </a>
               <div className="review-filename" title={activeItem.filename}>{activeItem.filename}</div>
-              <div className={`image-processing-state image-processing-${activeItem.background_status}`}>
-                <strong>{activeItem.background_status === "removed" ? "Background removed" : activeItem.background_status === "pending" ? "Preparing clean image" : activeItem.background_status === "not_configured" ? "White canvas ready" : activeItem.background_status === "failed" ? "Background removal needs retry" : "Legacy image"}</strong>
-                <span>{activeItem.background_status === "removed" ? "Transparent cutout and white-background image saved." : activeItem.background_status === "pending" ? "The queued worker will isolate this part before recognition." : activeItem.background_status === "not_configured" ? "Add the removal provider key to isolate future uploads." : "The recognition image remains available on white."}</span>
-                {activeItem.cutout_path && <a href={`/api/images/${activeItem.id}?variant=cutout`} target="_blank" rel="noreferrer">View transparent cutout</a>}
+              <div className={`image-processing-state image-processing-${activeItem.status}`}>
+                <strong>{activeItem.status === "pending" ? "Preparing image" : ["processing", "escalated"].includes(activeItem.status) ? "Analysing part" : "Image ready for identification"}</strong>
+                <span>{activeItem.status === "pending" ? "The normalized upload is queued for automotive-part analysis." : ["processing", "escalated"].includes(activeItem.status) ? "Gemini is identifying the part and assessing catalogue fields." : "The original normalized photo remains available for review and re-analysis."}</span>
               </div>
               <dl className="review-facts">
                 <InspectorField item={activeItem} field="brand" label="Brand" editing={editing} setEditing={setEditing} commitEdit={commitEdit} editable={isEditable(activeItem)} onConfirm={confirmField} onRecheck={recheckField} rechecking={rechecking} />

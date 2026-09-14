@@ -4,7 +4,7 @@ NovaLens is an enterprise automotive-parts recognition and review console. Recog
 
 ## Training mode
 
-Training mode is durable instruction-and-example learning, not provider-side fine-tuning. Active operating guidelines and a bounded set of reviewed AI-to-human corrections are stored in Postgres and supplied as context to later Gemini calls. The context is explicitly treated as guidance rather than visual proof. Corrections made in normal production batches remain in the edit audit log and are not silently added to training memory.
+Training mode is durable instruction-and-example learning, not provider-side fine-tuning. Active operating guidelines, a bounded set of reviewed AI-to-human corrections, and recent operator feedback are stored in Postgres and supplied as context to later Gemini calls. The context is explicitly treated as guidance rather than visual proof. Corrections made in normal production batches remain in the edit audit log and are not silently added to training memory.
 
 Set `GEMINI_API_KEY` only in the server environment to call Google AI directly. If it is absent, NovaLens uses the existing `OPENROUTER_API_KEY` to route both tiers to the same paid Gemini models; it never falls back to `openrouter/free`. Mock results are used only when neither key is configured.
 
@@ -31,7 +31,7 @@ Upload a folder of part photos and turn it into a manager-reviewable, export-rea
                      [Results DB] -> [Review Workspace] -> [CSV Exports]
 ```
 
-- Upload and preprocessing: validates type, size, and batch count; rotates from EXIF; caps the longest edge at 1024 px; strips metadata; optionally removes the background through the separate OpenRouter image-editing integration; stores a transparent cutout; and creates a white-background JPEG for recognition and export.
+- Upload and preprocessing: validates type, size, and batch count; rotates from EXIF; caps the longest edge at 1024 px; strips metadata; stores the normalized image durably; and sends that original analysis image into recognition without background removal.
 - Queue and worker: request-scoped Vercel work claims rows atomically with `FOR UPDATE SKIP LOCKED`, with per-image retries, exponential backoff, and a `needs_manual` dead-letter state. Review polling safely advances queued work without relying on a permanent server process.
 - Provider boundary: `src/lib/vision.ts` owns the direct Google AI SDK integration. Routes, persistence, and UI depend only on the local `VisionClient` contract.
 - Human review: lowest-confidence items appear first, with per-field evidence, inline edits, confirmation, targeted AI retries, an edit audit log, bulk decisions, and corrected-photo requeue.
@@ -48,11 +48,11 @@ npm run dev
 
 Add `DATABASE_URL` using the Supabase connection string from **Connect → Database**. Keep it server-only and replace `[YOUR-PASSWORD]`; if the password contains characters such as `@`, `:`, `/`, or `#`, percent-encode them first. For Vercel, use Supabase's transaction-pooler connection on port `6543` when available to avoid exhausting direct Postgres connections. The first server request creates the required tables and indexes idempotently.
 
-Add `GEMINI_API_KEY` to `.env` for preferred direct recognition. If only `OPENROUTER_API_KEY` is configured, recognition still uses Gemini 2.5 Flash-Lite and Gemini 2.5 Flash through OpenRouter, and also enables the optional Nano Banana cutout flow. Without either key, recognition uses clearly labelled mock tags.
+Add `GEMINI_API_KEY` to `.env` for preferred direct recognition. If only `OPENROUTER_API_KEY` is configured, recognition routes the configured paid Gemini model through OpenRouter. Without either key, recognition uses clearly labelled mock tags.
 
 ### Vercel environment setup
 
-In the Vercel project, add `DATABASE_URL`, `DATABASE_POOL_MAX`, and `GEMINI_API_KEY` under **Settings → Environment Variables** for **Production**. Add `OPENROUTER_API_KEY` only if background isolation is required, then redeploy. Do not commit `.env` or paste credentials into source control. These values remain server-only.
+In the Vercel project, add `DATABASE_URL`, `DATABASE_POOL_MAX`, and `GEMINI_API_KEY` under **Settings → Environment Variables** for **Production**. Add `OPENROUTER_API_KEY` only when the recognition fallback is needed, then redeploy. Do not commit `.env` or paste credentials into source control. These values remain server-only.
 
 ## Current production boundaries
 
