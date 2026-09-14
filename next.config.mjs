@@ -2,8 +2,9 @@
 const nextConfig = {
   serverExternalPackages: ["pg", "sharp"],
   agentRules: false,
-  // Allows CI/OneDrive workspaces to build away from a stale synced .next directory.
-  distDir: process.env.NOVALENS_NEXT_DIST_DIR || ".next",
+  // Keep generated output away from OneDrive's special handling of `.next`.
+  // The environment override remains available for isolated CI verification.
+  distDir: process.env.NOVALENS_NEXT_DIST_DIR || ".next-novalens",
   async headers() {
     return [{
       source: "/(.*)",

@@ -68,7 +68,7 @@ class GoogleVisionClient implements VisionClient {
     const response = await this.ai.models.generateContent({
       model,
       contents: [{ role: "user", parts: [{ text: prompt }, { inlineData: { mimeType: "image/jpeg", data: image.toString("base64") } }] }],
-      config: { responseMimeType: "application/json", responseJsonSchema: RESPONSE_SCHEMA, temperature: 0.1, maxOutputTokens: 1100 },
+      config: { responseMimeType: "application/json", responseJsonSchema: RESPONSE_SCHEMA, maxOutputTokens: 1100 },
     });
     if (!response.text) throw new Error("Google AI returned an empty response");
     return {

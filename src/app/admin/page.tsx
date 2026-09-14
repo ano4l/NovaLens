@@ -3,8 +3,7 @@
 import { useEffect, useState } from "react";
 
 const MODEL_OPTIONS = [
-  { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash-Lite", note: "Stable high-volume recognition" },
-  { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", note: "Stable higher-quality rechecks" },
+  { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash", note: "Stable multimodal recognition and rechecks" },
 ];
 
 const GROUPS = [
@@ -81,11 +80,11 @@ export default function AdminPage() {
     }
   };
 
-  const applyQualityConsensus = () => {
+  const applyRecommendedModel = () => {
     setSettings((current) => ({
       ...current,
-      tier1_model: "gemini-2.5-flash-lite",
-      tier2_model: "gemini-2.5-flash",
+      tier1_model: "gemini-3.6-flash",
+      tier2_model: "gemini-3.6-flash",
     }));
     setState("idle");
   };
@@ -107,10 +106,10 @@ export default function AdminPage() {
 
       <section className="panel p-5 sm:p-6 flex flex-col sm:flex-row gap-4 sm:items-center sm:justify-between">
         <div>
-          <h2 className="font-medium">Recommended Gemini pairing</h2>
-          <p className="text-sm text-zinc-500 mt-1 max-w-2xl">Direct Google AI recognition keeps the provider secret server-side and uses stable Gemini models for routine and escalated work.</p>
+          <h2 className="font-medium">Recommended Gemini model</h2>
+          <p className="text-sm text-zinc-500 mt-1 max-w-2xl">Direct Google AI recognition keeps the provider secret server-side and uses Gemini 3.6 Flash for routine work, escalations, and field rechecks.</p>
         </div>
-        <button type="button" onClick={applyQualityConsensus} className="secondary-button px-4 py-2.5 text-sm">Apply pairing</button>
+        <button type="button" onClick={applyRecommendedModel} className="secondary-button px-4 py-2.5 text-sm">Use Gemini 3.6 Flash</button>
       </section>
 
       <div className="grid gap-5">

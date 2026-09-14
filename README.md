@@ -1,6 +1,6 @@
 # NovaLens
 
-NovaLens is an enterprise automotive-parts recognition and review console. Recognition calls go directly to Google AI through the official `@google/genai` SDK: `gemini-2.5-flash-lite` handles high-volume Tier 1 work and `gemini-2.5-flash` handles Tier 2 and field rechecks.
+NovaLens is an enterprise automotive-parts recognition and review console. Recognition calls go directly to Google AI through the official `@google/genai` SDK, with stable `gemini-3.6-flash` handling routine recognition, escalations, and field rechecks.
 
 ## Training mode
 
@@ -12,8 +12,8 @@ Upload a folder of part photos and turn it into a manager-reviewable, export-rea
 
 ## Recognition strategy
 
-- Routine pass: stable `gemini-2.5-flash-lite` keeps high-volume throughput and cost under control.
-- Escalation and rechecks: stable `gemini-2.5-flash` performs the higher-quality second pass.
+- Routine pass: stable `gemini-3.6-flash` handles multimodal recognition with structured output.
+- Escalation and rechecks: the same pinned `gemini-3.6-flash` model re-evaluates uncertain items with the stronger Tier 2 prompt and training context.
 - Every field carries its own confidence, visible evidence, and review status. A reviewer can edit, confirm, or re-run only that field without overwriting trusted values.
 - When `GEMINI_API_KEY` is absent, the app uses clearly synthetic mock results so the workflow remains testable without claiming live recognition.
 

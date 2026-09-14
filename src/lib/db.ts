@@ -103,7 +103,7 @@ async function migrate(db: Pool) {
   `);
 
   const settings = {
-    tier1_model: "gemini-2.5-flash-lite", tier2_model: "gemini-2.5-flash",
+    tier1_model: "gemini-3.6-flash", tier2_model: "gemini-3.6-flash",
     escalation_threshold: "0.8", tier1_input_rate: "0.10", tier1_output_rate: "0.40", tier2_input_rate: "0.30",
     tier2_output_rate: "2.50", batch_discount: "0", est_input_tokens_per_image: "1105",
     est_output_tokens_per_image: "150", est_escalation_rate: "0.10", guardrail_margin: "0.25",
@@ -112,8 +112,8 @@ async function migrate(db: Pool) {
   for (const [key, value] of Object.entries(settings)) {
     await db.query("INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING", [key, value]);
   }
-  await db.query("UPDATE settings SET value = 'gemini-2.5-flash-lite' WHERE key = 'tier1_model' AND value IN ('qwen/qwen3-vl-235b-a22b-instruct', 'openrouter/free')");
-  await db.query("UPDATE settings SET value = 'gemini-2.5-flash' WHERE key = 'tier2_model' AND value IN ('google/gemini-3.1-pro-preview', 'qwen/qwen3-vl-235b-a22b-thinking')");
+  await db.query("UPDATE settings SET value = 'gemini-3.6-flash' WHERE key = 'tier1_model' AND value IN ('qwen/qwen3-vl-235b-a22b-instruct', 'openrouter/free', 'gemini-2.5-flash-lite')");
+  await db.query("UPDATE settings SET value = 'gemini-3.6-flash' WHERE key = 'tier2_model' AND value IN ('google/gemini-3.1-pro-preview', 'qwen/qwen3-vl-235b-a22b-thinking', 'gemini-2.5-flash')");
   await db.query("UPDATE settings SET value = '0.10' WHERE key = 'tier1_input_rate' AND value = '0'");
   await db.query("UPDATE settings SET value = '0.40' WHERE key = 'tier1_output_rate' AND value = '0'");
   await db.query("UPDATE settings SET value = '0.30' WHERE key = 'tier2_input_rate' AND value = '0'");
