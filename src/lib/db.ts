@@ -49,7 +49,7 @@ async function migrate(db: Pool) {
       id SERIAL PRIMARY KEY, job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
       filename TEXT NOT NULL, image_path TEXT NOT NULL, cutout_path TEXT,
       background_status TEXT NOT NULL DEFAULT 'legacy', status TEXT NOT NULL DEFAULT 'pending',
-      brand TEXT, part_name TEXT, year_start INTEGER, year_end INTEGER, condition_notes TEXT,
+      brand TEXT, vehicle_model TEXT, part_name TEXT, year_start INTEGER, year_end INTEGER, condition_notes TEXT,
       confidence TEXT, needs_review INTEGER NOT NULL DEFAULT 0, tier INTEGER, raw_json TEXT,
       field_reviews TEXT, attempts INTEGER NOT NULL DEFAULT 0, next_retry_at BIGINT NOT NULL DEFAULT 0,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -109,6 +109,7 @@ async function migrate(db: Pool) {
     ALTER TABLE items ADD COLUMN IF NOT EXISTS cutout_path TEXT;
     ALTER TABLE items ADD COLUMN IF NOT EXISTS background_status TEXT NOT NULL DEFAULT 'legacy';
     ALTER TABLE items ADD COLUMN IF NOT EXISTS field_reviews TEXT;
+    ALTER TABLE items ADD COLUMN IF NOT EXISTS vehicle_model TEXT;
   `);
 
   const settings = {

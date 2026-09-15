@@ -14,6 +14,7 @@ import { isRecognitionField, parseFieldAssessments } from "@/lib/recognition";
 import { saveItemImage } from "@/lib/image-store";
 import { after } from "next/server";
 import { processQueueOnce } from "@/lib/worker";
+import { estimateJobCostUSD } from "@/lib/cost";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -22,7 +23,7 @@ export const maxDuration = 300;
 // UPDATE statements from whatever keys the client sends — that's how a client
 // ends up writing `attempts` or `job_id`. Compare against the audit loop below:
 // only the diffed fields get logged, and only from this list.
-const EDITABLE = ["brand", "part_name", "year_start", "year_end", "condition_notes", "status"] as const;
+const EDITABLE = ["brand", "vehicle_model", "part_name", "year_start", "year_end", "condition_notes", "status"] as const;
 const ALLOWED_STATUSES = new Set(["tagged", "approved", "rejected", "flagged_rephoto", "needs_manual"]);
 
 function validatedValue(field: (typeof EDITABLE)[number], value: unknown): unknown {
@@ -39,7 +40,7 @@ function validatedValue(field: (typeof EDITABLE)[number], value: unknown): unkno
     return value;
   }
   if (typeof value !== "string") throw new Error(`${field} must be text`);
-  const limits: Record<string, number> = { brand: 80, part_name: 160, condition_notes: 500 };
+  const limits: Record<string, number> = { brand: 80, vehicle_model: 80, part_name: 160, condition_notes: 500 };
   return value.trim().slice(0, limits[field]);
 }
 
@@ -97,7 +98,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   }
   if (edits.some((edit) => isRecognitionField(edit.field)) || isRecognitionField(body.confirm_field)) {
     updates.field_reviews = JSON.stringify(fieldReviews);
-    const importantFields = ["brand", "part_name", "year_start", "year_end"] as const;
+    const importantFields = ["brand", "vehicle_model", "part_name", "year_start", "year_end"] as const;
     updates.needs_review = importantFields.every((field) => ["confirmed", "corrected"].includes(fieldReviews[field]?.status ?? "")) ? 0 : item.needs_review;
   }
 
@@ -184,7 +185,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   await saveItemImage(item.id, processed.image);
   await db.query(
     `UPDATE items SET image_path = $1, cutout_path = $2, background_status = $3, filename = $4, status = 'pending', tier = NULL, attempts = 0,
-       next_retry_at = 0, brand = NULL, part_name = NULL, year_start = NULL, year_end = NULL,
+       next_retry_at = 0, brand = NULL, vehicle_model = NULL, part_name = NULL, year_start = NULL, year_end = NULL,
        condition_notes = NULL, confidence = NULL, needs_review = 0, raw_json = NULL, field_reviews = NULL,
        updated_at = NOW() WHERE id = $5`,
     [processed.relPath, processed.cutoutPath, processed.backgroundStatus, file.name, item.id]
@@ -193,4 +194,37 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   after(() => processQueueOnce(item.job_id).catch((error) => console.error("[queue] re-photo processing failed", error)));
   return NextResponse.json({ ok: true });
+}
+
+export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const itemId = Number(id);
+  if (!Number.isInteger(itemId)) return NextResponse.json({ error: "Invalid item" }, { status: 400 });
+
+  const db = await getDb();
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query<Item>("SELECT * FROM items WHERE id = $1 FOR UPDATE", [itemId]);
+    const item = rows[0];
+    if (!item) {
+      await client.query("ROLLBACK");
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+    const { rows: jobs } = await client.query<{ mode: import("@/lib/types").JobMode }>("SELECT mode FROM jobs WHERE id = $1 FOR UPDATE", [item.job_id]);
+    await client.query("DELETE FROM items WHERE id = $1", [item.id]);
+    const { rows: counts } = await client.query<{ image_count: number }>(
+      "UPDATE jobs SET image_count = GREATEST(0, image_count - 1), updated_at = NOW() WHERE id = $1 RETURNING image_count",
+      [item.job_id],
+    );
+    const estimate = await estimateJobCostUSD(counts[0].image_count, jobs[0].mode);
+    await client.query("UPDATE jobs SET est_cost_usd = $1, updated_at = NOW() WHERE id = $2", [estimate, item.job_id]);
+    await client.query("COMMIT");
+    return NextResponse.json({ ok: true, itemId: item.id });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }

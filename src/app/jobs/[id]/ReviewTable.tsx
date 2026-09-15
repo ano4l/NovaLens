@@ -16,6 +16,7 @@
 "use client";
 
 import { useState, useMemo, useRef, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { FieldAssessment, Item, RecognitionField } from "@/lib/types";
 import { parseFieldAssessments } from "@/lib/recognition";
 import { prepareUploadFile } from "@/lib/client-image";
@@ -40,6 +41,7 @@ export default function ReviewTable({
   jobStatus: string;
   workflowMode: string;
 }) {
+  const router = useRouter();
   const [items, setItems] = useState<Item[]>(initialItems);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [activeId, setActiveId] = useState<number | null>(initialItems[0]?.id ?? null);
@@ -49,6 +51,7 @@ export default function ReviewTable({
   const rephotoTarget = useRef<number | null>(null);
   const inspectorRef = useRef<HTMLElement>(null);
   const [busy, setBusy] = useState(false);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [rechecking, setRechecking] = useState<{ id: number; field: RecognitionField } | null>(null);
 
@@ -183,6 +186,28 @@ export default function ReviewTable({
     rephotoRef.current?.click();
   };
 
+  const deleteItem = async (item: Item) => {
+    if (!window.confirm(`Delete ${item.filename}? This permanently removes the photo and its recognition data from this batch.`)) return;
+    setDeletingId(item.id);
+    setError(null);
+    try {
+      const response = await fetch(`/api/items/${item.id}`, { method: "DELETE" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error ?? "Could not delete this item");
+      setItems((current) => current.filter((entry) => entry.id !== item.id));
+      setSelected((current) => {
+        const next = new Set(current);
+        next.delete(item.id);
+        return next;
+      });
+      router.refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not delete this item");
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   const reviewNext = () => {
     const next = items.find((item) => item.needs_review === 1 && item.status !== "approved") ?? items.find((item) => item.status === "tagged");
     if (!next) return;
@@ -307,6 +332,7 @@ export default function ReviewTable({
               </th>
               <th className="px-3 py-2">Photo</th>
               <th className="px-3 py-2">Brand</th>
+              <th className="px-3 py-2">Model</th>
               <th className="px-3 py-2">Part</th>
               <th className="px-3 py-2">Years</th>
               <th className="px-3 py-2">Condition</th>
@@ -334,6 +360,7 @@ export default function ReviewTable({
                   </button>
                 </td>
                 <Cell item={i} field="brand" editing={editing} setEditing={setEditing} commitEdit={commitEdit} editable={isEditable(i)} onRecheck={recheckField} rechecking={rechecking} />
+                <Cell item={i} field="vehicle_model" editing={editing} setEditing={setEditing} commitEdit={commitEdit} editable={isEditable(i)} onRecheck={recheckField} rechecking={rechecking} />
                 <Cell item={i} field="part_name" editing={editing} setEditing={setEditing} commitEdit={commitEdit} editable={isEditable(i)} onRecheck={recheckField} rechecking={rechecking} wide />
                 <td className="px-3 py-2 whitespace-nowrap">
                   <Cell item={i} field="year_start" editing={editing} setEditing={setEditing} commitEdit={commitEdit} editable={isEditable(i)} onRecheck={recheckField} rechecking={rechecking} inline />
@@ -372,6 +399,9 @@ export default function ReviewTable({
                   <button onClick={() => startRephoto(i.id)} className="text-amber-400 hover:underline text-xs">
                     Re-photo
                   </button>
+                  <button type="button" onClick={() => deleteItem(i)} disabled={deletingId === i.id} className="text-red-400 hover:underline text-xs ml-2 disabled:opacity-50">
+                    {deletingId === i.id ? "Deleting..." : "Delete"}
+                  </button>
                 </td>
               </tr>
             ))}
@@ -393,7 +423,7 @@ export default function ReviewTable({
               <button type="button" onClick={() => setActiveId(item.id)} className="review-card-select" aria-label={`Inspect ${item.filename}`}>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={`/api/images/${item.id}`} alt="" className="review-card-photo" />
-                <span className="min-w-0 text-left"><strong>{item.brand || "Unidentified"}</strong><span>{item.part_name || "Part not set"}</span><small>{item.year_start || item.year_end ? `${item.year_start ?? "?"} – ${item.year_end ?? "?"}` : "Year not set"}</small></span>
+                <span className="min-w-0 text-left"><strong>{[item.brand, item.vehicle_model].filter(Boolean).join(" ") || "Unidentified"}</strong><span>{item.part_name || "Part not set"}</span><small>{item.year_start || item.year_end ? `${item.year_start ?? "?"} – ${item.year_end ?? "?"}` : "Year not set"}</small></span>
               </button>
               <div className="review-card-meta"><span className={`review-status review-status-${item.status}`}>{item.status.replace(/_/g, " ")}</span><span className={`review-card-confidence ${item.confidence ?? "unknown"}`}>{item.confidence ?? "Unknown"}{item.needs_review === 1 ? " · review" : ""}</span></div>
               <div className="review-card-bottom"><span>{item.condition_notes || "No condition note"}</span><label><input type="checkbox" aria-label={`Select ${item.filename}`} checked={selected.has(item.id)} onChange={() => toggleSel(item.id)} /> Select</label></div>
@@ -420,6 +450,7 @@ export default function ReviewTable({
               </div>
               <dl className="review-facts">
                 <InspectorField item={activeItem} field="brand" label="Brand" editing={editing} setEditing={setEditing} commitEdit={commitEdit} editable={isEditable(activeItem)} onConfirm={confirmField} onRecheck={recheckField} rechecking={rechecking} />
+                <InspectorField item={activeItem} field="vehicle_model" label="Model" editing={editing} setEditing={setEditing} commitEdit={commitEdit} editable={isEditable(activeItem)} onConfirm={confirmField} onRecheck={recheckField} rechecking={rechecking} />
                 <InspectorField item={activeItem} field="part_name" label="Part" editing={editing} setEditing={setEditing} commitEdit={commitEdit} editable={isEditable(activeItem)} onConfirm={confirmField} onRecheck={recheckField} rechecking={rechecking} />
                 <InspectorField item={activeItem} field="year_start" label="From year" editing={editing} setEditing={setEditing} commitEdit={commitEdit} editable={isEditable(activeItem)} onConfirm={confirmField} onRecheck={recheckField} rechecking={rechecking} />
                 <InspectorField item={activeItem} field="year_end" label="To year" editing={editing} setEditing={setEditing} commitEdit={commitEdit} editable={isEditable(activeItem)} onConfirm={confirmField} onRecheck={recheckField} rechecking={rechecking} />
@@ -429,6 +460,7 @@ export default function ReviewTable({
               <div className="review-actions">
                 {activeItem.status === "tagged" && <button onClick={() => patchItem(activeItem.id, { status: "approved" })} className="review-approve">Approve photo</button>}
                 <button onClick={() => startRephoto(activeItem.id)} className="secondary-button px-3 py-2.5 text-sm">Request re-photo</button>
+                <button type="button" onClick={() => deleteItem(activeItem)} disabled={deletingId === activeItem.id} className="px-3 py-2.5 text-sm text-red-300 border border-red-900 rounded-lg hover:bg-red-950/40 disabled:opacity-50">{deletingId === activeItem.id ? "Deleting..." : "Delete photo"}</button>
                 <button type="button" disabled={(counts.needs_review ?? 0) === 0} onClick={reviewNext} className="review-mobile-next">Review next <span aria-hidden="true">→</span></button>
               </div>
               <div className="reference-ready">
@@ -534,7 +566,7 @@ function Cell({
   rechecking,
 }: {
   item: Item;
-  field: "brand" | "part_name" | "year_start" | "year_end" | "condition_notes";
+  field: "brand" | "vehicle_model" | "part_name" | "year_start" | "year_end" | "condition_notes";
   editing: { id: number; field: string; value: string } | null;
   setEditing: (e: { id: number; field: string; value: string } | null) => void;
   commitEdit: () => void;

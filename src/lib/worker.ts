@@ -108,16 +108,16 @@ async function processItem(item: Item, alreadyClaimed = false) {
       [item.id, item.job_id, tier, call.model, mode, call.inputTokens, call.outputTokens, cost, call.latencyMs]);
 
     if (tier === 1 && call.result.needs_review) {
-      await db.query(`UPDATE items SET status = 'escalated', tier = 1, brand = $1, part_name = $2, year_start = $3,
-        year_end = $4, condition_notes = $5, confidence = $6, needs_review = 1, raw_json = $7, field_reviews = $8,
-        attempts = 0, next_retry_at = 0, updated_at = NOW() WHERE id = $9`,
-        [call.result.brand, call.result.part_name, call.result.year_start, call.result.year_end, call.result.condition_notes,
+      await db.query(`UPDATE items SET status = 'escalated', tier = 1, brand = $1, vehicle_model = $2, part_name = $3, year_start = $4,
+        year_end = $5, condition_notes = $6, confidence = $7, needs_review = 1, raw_json = $8, field_reviews = $9,
+        attempts = 0, next_retry_at = 0, updated_at = NOW() WHERE id = $10`,
+        [call.result.brand, call.result.vehicle_model, call.result.part_name, call.result.year_start, call.result.year_end, call.result.condition_notes,
           call.result.confidence, JSON.stringify(call.result), fieldReviews, item.id]);
     } else {
-      await db.query(`UPDATE items SET status = 'tagged', tier = $1, brand = $2, part_name = $3, year_start = $4,
-        year_end = $5, condition_notes = $6, confidence = $7, needs_review = $8, raw_json = $9, field_reviews = $10,
-        updated_at = NOW() WHERE id = $11`,
-        [tier, call.result.brand, call.result.part_name, call.result.year_start, call.result.year_end,
+      await db.query(`UPDATE items SET status = 'tagged', tier = $1, brand = $2, vehicle_model = $3, part_name = $4, year_start = $5,
+        year_end = $6, condition_notes = $7, confidence = $8, needs_review = $9, raw_json = $10, field_reviews = $11,
+        updated_at = NOW() WHERE id = $12`,
+        [tier, call.result.brand, call.result.vehicle_model, call.result.part_name, call.result.year_start, call.result.year_end,
           call.result.condition_notes, call.result.confidence, call.result.needs_review ? 1 : 0,
           JSON.stringify(call.result), fieldReviews, item.id]);
     }

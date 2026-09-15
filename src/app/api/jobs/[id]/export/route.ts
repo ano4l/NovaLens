@@ -26,7 +26,7 @@ function toCsv(headers: string[], rows: unknown[][]): string {
 function title(i: Item): string {
   const years =
     i.year_start && i.year_end ? `${i.year_start}-${i.year_end}` : i.year_start ? String(i.year_start) : "";
-  return [years, i.brand ?? "", i.part_name ?? ""].filter(Boolean).join(" ").trim() || i.filename;
+  return [i.brand ?? "", i.vehicle_model ?? "", years, i.part_name ?? ""].filter(Boolean).join(" ").trim() || i.filename;
 }
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -51,7 +51,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       i.condition_notes ?? "",
       i.brand ?? "",
       i.part_name ?? "",
-      [i.brand, i.part_name, i.year_start && i.year_end ? `${i.year_start}-${i.year_end}` : null]
+      [i.brand, i.vehicle_model, i.part_name, i.year_start && i.year_end ? `${i.year_start}-${i.year_end}` : null]
         .filter(Boolean)
         .join(", "),
       "active",
@@ -64,7 +64,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       title(i),
       i.condition_notes ?? "",
       i.part_name ?? "",
-      i.brand ?? "",
+      [i.brand, i.vehicle_model].filter(Boolean).join(" "),
       1,
       "Fitment Years",
       i.year_start && i.year_end ? `${i.year_start}-${i.year_end}` : "",
@@ -74,7 +74,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     headers = [
       "id",
       "filename",
+      "listing_title",
       "brand",
+      "vehicle_model",
       "part_name",
       "year_start",
       "year_end",
@@ -86,7 +88,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     rows = items.map((i) => [
       i.id,
       i.filename,
+      title(i),
       i.brand,
+      i.vehicle_model,
       i.part_name,
       i.year_start,
       i.year_end,

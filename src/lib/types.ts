@@ -29,7 +29,7 @@ export type Confidence = "high" | "medium" | "low";
 // STUDY: Item-level confidence is too coarse for catalogue work. These field
 // types let the UI say "the part is clear, but the fitment years are not" and
 // preserve a separate verification state for every model-proposed value.
-export type RecognitionField = "brand" | "part_name" | "year_start" | "year_end" | "condition_notes";
+export type RecognitionField = "brand" | "vehicle_model" | "part_name" | "year_start" | "year_end" | "condition_notes";
 export type FieldReviewStatus = "ai_suggested" | "needs_review" | "confirmed" | "corrected";
 
 export interface FieldAssessment {
@@ -121,6 +121,7 @@ export interface Item {
   // (or may not have run yet). `null` here means "unknown", not "empty" — an
   // important semantic distinction the UI relies on to show "—".
   brand: string | null;
+  vehicle_model: string | null;
   part_name: string | null;
   year_start: number | null;
   year_end: number | null;
@@ -171,6 +172,7 @@ export interface EditLog {
 // one file (vision.ts), not the whole app.
 export interface TagResult {
   brand: string;
+  vehicle_model: string;
   part_name: string;
   year_start: number | null;
   year_end: number | null;

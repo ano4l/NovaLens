@@ -1,6 +1,6 @@
 import { FieldAssessments, RecognitionField, TagResult } from "./types";
 
-export const RECOGNITION_FIELDS: RecognitionField[] = ["brand", "part_name", "year_start", "year_end", "condition_notes"];
+export const RECOGNITION_FIELDS: RecognitionField[] = ["brand", "vehicle_model", "part_name", "year_start", "year_end", "condition_notes"];
 
 // STUDY: AI output becomes review workflow data here. The model supplies a
 // probability and evidence; NovaLens applies its own threshold and status.

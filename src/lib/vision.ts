@@ -13,6 +13,7 @@ const RESPONSE_SCHEMA = {
   type: "object",
   properties: {
     brand: { type: "string", description: "Vehicle manufacturer, or empty when unknown." },
+    vehicle_model: { type: "string", description: "Vehicle model the part fits, or empty when unknown." },
     part_name: { type: "string", description: "Specific listing-ready automotive part name." },
     year_start: { type: ["integer", "null"], description: "Earliest compatible model year." },
     year_end: { type: ["integer", "null"], description: "Latest compatible model year." },
@@ -22,7 +23,7 @@ const RESPONSE_SCHEMA = {
     field_confidence: { type: "object", properties: CONFIDENCE_PROPERTIES, required: RECOGNITION_FIELDS, additionalProperties: false },
     field_evidence: { type: "object", properties: EVIDENCE_PROPERTIES, required: RECOGNITION_FIELDS, additionalProperties: false },
   },
-  required: ["brand", "part_name", "year_start", "year_end", "condition_notes", "confidence", "needs_review", "field_confidence", "field_evidence"],
+  required: ["brand", "vehicle_model", "part_name", "year_start", "year_end", "condition_notes", "confidence", "needs_review", "field_confidence", "field_evidence"],
   additionalProperties: false,
 } as const;
 
@@ -43,6 +44,7 @@ ${JSON.stringify(context.operatorFeedback)}
   return `You are an expert automotive-parts catalogue verifier for a salvage and wholesale warehouse.
 ${focusText}
 - brand is the vehicle manufacturer the part fits, not a component manufacturer.
+- vehicle_model is the vehicle model the part fits; leave it empty when the model is not visually supported.
 - part_name includes side or position only when visibly supported.
 - year_start and year_end are compatible model years; use null without a readable part number, distinctive geometry, or other visible evidence.
 - condition_notes may describe only visible wear or damage.
@@ -178,7 +180,7 @@ function normalizeResult(value: Partial<TagResult>): TagResult {
     fieldConfidence[field] = Number.isFinite(score) ? Math.max(0, Math.min(1, score)) : confidence === "high" ? 0.85 : confidence === "medium" ? 0.65 : 0.35;
     fieldEvidence[field] = String(value.field_evidence?.[field] ?? "No evidence supplied").trim().slice(0, 240);
   }
-  return { brand: typeof value.brand === "string" ? value.brand.trim().slice(0, 80) : "", part_name: typeof value.part_name === "string" ? value.part_name.trim().slice(0, 160) : "", year_start: invalidRange ? yearEnd : yearStart, year_end: invalidRange ? yearStart : yearEnd, condition_notes: typeof value.condition_notes === "string" ? value.condition_notes.trim().slice(0, 500) : "", confidence, needs_review: Boolean(value.needs_review) || confidence === "low", field_confidence: fieldConfidence, field_evidence: fieldEvidence };
+  return { brand: typeof value.brand === "string" ? value.brand.trim().slice(0, 80) : "", vehicle_model: typeof value.vehicle_model === "string" ? value.vehicle_model.trim().slice(0, 80) : "", part_name: typeof value.part_name === "string" ? value.part_name.trim().slice(0, 160) : "", year_start: invalidRange ? yearEnd : yearStart, year_end: invalidRange ? yearStart : yearEnd, condition_notes: typeof value.condition_notes === "string" ? value.condition_notes.trim().slice(0, 500) : "", confidence, needs_review: Boolean(value.needs_review) || confidence === "low", field_confidence: fieldConfidence, field_evidence: fieldEvidence };
 }
 
 class MockVisionClient implements VisionClient {
@@ -188,7 +190,7 @@ class MockVisionClient implements VisionClient {
     const score = ambiguous ? 0.38 : 0.86;
     const field_confidence = Object.fromEntries(RECOGNITION_FIELDS.map((field) => [field, score])) as Record<RecognitionField, number>;
     const field_evidence = Object.fromEntries(RECOGNITION_FIELDS.map((field) => [field, "Mock visual evidence"])) as Record<RecognitionField, string>;
-    return { result: { brand: ambiguous ? "" : "Toyota", part_name: "Front Left Headlight Assembly", year_start: ambiguous ? null : yearStart, year_end: ambiguous ? null : yearStart + 4, condition_notes: ambiguous ? "Heavy surface rust, markings illegible" : "Minor visible wear", confidence: ambiguous ? "low" : "high", needs_review: ambiguous, field_confidence, field_evidence }, model: `mock-tier${tier}`, inputTokens: 1105, outputTokens: 240, latencyMs: 20 };
+    return { result: { brand: ambiguous ? "" : "Toyota", vehicle_model: ambiguous ? "" : "Corolla", part_name: "Front Left Headlight Assembly", year_start: ambiguous ? null : yearStart, year_end: ambiguous ? null : yearStart + 4, condition_notes: ambiguous ? "Heavy surface rust, markings illegible" : "Minor visible wear", confidence: ambiguous ? "low" : "high", needs_review: ambiguous, field_confidence, field_evidence }, model: `mock-tier${tier}`, inputTokens: 1105, outputTokens: 240, latencyMs: 20 };
   }
   recheckField(image: Buffer, _field: RecognitionField) { return this.tagImage(image, 2); }
 }
