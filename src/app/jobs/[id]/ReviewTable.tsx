@@ -30,6 +30,13 @@ const CONF_STYLE: Record<string, string> = {
 
 const STATUS_FILTERS = ["all", "needs_review", "tagged", "approved", "rejected", "flagged_rephoto", "needs_manual", "pending"] as const;
 
+function catalogueTitle(item: Item) {
+  const years = item.year_start || item.year_end
+    ? `${item.year_start ?? "?"}-${item.year_end ?? "?"}`
+    : "";
+  return [item.brand, item.vehicle_model, years, item.part_name].filter(Boolean).join(" ") || "Unidentified";
+}
+
 export default function ReviewTable({
   jobId,
   initialItems,
@@ -324,7 +331,7 @@ export default function ReviewTable({
             </div>
           </div>
           <div className="review-table-wrap">
-        <table className="w-full min-w-[1180px] text-sm">
+        <table className="w-full min-w-[1040px] text-sm">
           <thead className="bg-zinc-900/90 text-zinc-500 text-left sticky top-16 z-10">
             <tr>
               <th className="px-3 py-2 w-8">
@@ -335,7 +342,6 @@ export default function ReviewTable({
               <th className="px-3 py-2">Model</th>
               <th className="px-3 py-2">Part</th>
               <th className="px-3 py-2">Years</th>
-              <th className="px-3 py-2">Condition</th>
               <th className="px-3 py-2">Confidence</th>
               <th className="px-3 py-2">Tier</th>
               <th className="px-3 py-2">Status</th>
@@ -367,7 +373,6 @@ export default function ReviewTable({
                   <span className="text-zinc-500">-</span>
                   <Cell item={i} field="year_end" editing={editing} setEditing={setEditing} commitEdit={commitEdit} editable={isEditable(i)} onRecheck={recheckField} rechecking={rechecking} inline />
                 </td>
-                <Cell item={i} field="condition_notes" editing={editing} setEditing={setEditing} commitEdit={commitEdit} editable={isEditable(i)} onRecheck={recheckField} rechecking={rechecking} wide />
                 <td className="px-3 py-2">
                   {i.confidence ? (
                     <span className={`inline-flex border text-xs px-2 py-0.5 rounded-full ${CONF_STYLE[i.confidence]}`}>
@@ -423,10 +428,10 @@ export default function ReviewTable({
               <button type="button" onClick={() => setActiveId(item.id)} className="review-card-select" aria-label={`Inspect ${item.filename}`}>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={`/api/images/${item.id}`} alt="" className="review-card-photo" />
-                <span className="min-w-0 text-left"><strong>{[item.brand, item.vehicle_model].filter(Boolean).join(" ") || "Unidentified"}</strong><span>{item.part_name || "Part not set"}</span><small>{item.year_start || item.year_end ? `${item.year_start ?? "?"} – ${item.year_end ?? "?"}` : "Year not set"}</small></span>
+                <span className="min-w-0 text-left"><strong>{catalogueTitle(item)}</strong></span>
               </button>
               <div className="review-card-meta"><span className={`review-status review-status-${item.status}`}>{item.status.replace(/_/g, " ")}</span><span className={`review-card-confidence ${item.confidence ?? "unknown"}`}>{item.confidence ?? "Unknown"}{item.needs_review === 1 ? " · review" : ""}</span></div>
-              <div className="review-card-bottom"><span>{item.condition_notes || "No condition note"}</span><label><input type="checkbox" aria-label={`Select ${item.filename}`} checked={selected.has(item.id)} onChange={() => toggleSel(item.id)} /> Select</label></div>
+              <div className="review-card-bottom"><label><input type="checkbox" aria-label={`Select ${item.filename}`} checked={selected.has(item.id)} onChange={() => toggleSel(item.id)} /> Select</label></div>
             </div>
           ))}
         </div>
@@ -454,7 +459,6 @@ export default function ReviewTable({
                 <InspectorField item={activeItem} field="part_name" label="Part" editing={editing} setEditing={setEditing} commitEdit={commitEdit} editable={isEditable(activeItem)} onConfirm={confirmField} onRecheck={recheckField} rechecking={rechecking} />
                 <InspectorField item={activeItem} field="year_start" label="From year" editing={editing} setEditing={setEditing} commitEdit={commitEdit} editable={isEditable(activeItem)} onConfirm={confirmField} onRecheck={recheckField} rechecking={rechecking} />
                 <InspectorField item={activeItem} field="year_end" label="To year" editing={editing} setEditing={setEditing} commitEdit={commitEdit} editable={isEditable(activeItem)} onConfirm={confirmField} onRecheck={recheckField} rechecking={rechecking} />
-                <InspectorField item={activeItem} field="condition_notes" label="Condition" editing={editing} setEditing={setEditing} commitEdit={commitEdit} editable={isEditable(activeItem)} onConfirm={confirmField} onRecheck={recheckField} rechecking={rechecking} />
                 <Fact label="Confidence" value={activeItem.confidence ? `${activeItem.confidence}${activeItem.needs_review === 1 ? " · review" : ""}` : null} />
               </dl>
               <div className="review-actions">
@@ -511,9 +515,8 @@ function InspectorField({
         ) : (
           <button type="button" disabled={!editable} onClick={() => setEditing({ id: item.id, field, value })} className="review-fact-value"><span>{value || <span className="text-zinc-600">Not set</span>}</span> {editable && <span className="review-edit-hint">Edit {label.toLowerCase()}</span>}</button>
         )}
-        {assessment?.evidence && <p className="field-evidence">{assessment.evidence}</p>}
         <div className="field-actions">
-          <button type="button" disabled={!editable || isRechecking} onClick={() => onRecheck(item.id, field)}>{isRechecking ? "Checking..." : "Try AI again"}</button>
+          <button type="button" disabled={!editable || isRechecking} onClick={() => onRecheck(item.id, field)}>{isRechecking ? "Checking..." : "Search Lens again"}</button>
           <button type="button" disabled={!editable || assessment?.status === "confirmed" || assessment?.status === "corrected"} onClick={() => onConfirm(item.id, field)}>{assessment?.status === "confirmed" ? "Confirmed" : assessment?.status === "corrected" ? "Corrected" : "Confirm field"}</button>
         </div>
       </dd>
@@ -604,7 +607,7 @@ function Cell({
     ) : (
       <span className="table-field-inline">
         <button type="button" disabled={!editable} onClick={() => editable && setEditing({ id: item.id, field, value: String(value) })} className={editable ? "cursor-text hover:bg-zinc-800 rounded px-1" : "text-zinc-400"}>{value || "-"}</button>
-        <button type="button" disabled={!editable || isRechecking} onClick={() => onRecheck(item.id, field)} className="table-ai-button" aria-label={`Try AI again for ${field.replace(/_/g, " ")}`}>{isRechecking ? "..." : "AI"}</button>
+        <button type="button" disabled={!editable || isRechecking} onClick={() => onRecheck(item.id, field)} className="table-ai-button" aria-label={`Search Lens again for ${field.replace(/_/g, " ")}`}>{isRechecking ? "..." : "Lens"}</button>
       </span>
     );
   }
@@ -616,7 +619,7 @@ function Cell({
       ) : (
         <div className="table-field-cell">
           <button type="button" disabled={!editable} onClick={() => editable && setEditing({ id: item.id, field, value: String(value) })} className={`${editable ? "cursor-text hover:bg-zinc-800 rounded px-1 -mx-1" : ""} ${wide ? "block max-w-[16rem] truncate" : ""}`} title={String(value)}>{value || <span className="text-zinc-600">-</span>}</button>
-          <div className="table-field-tools"><FieldState assessment={assessment} /><button type="button" disabled={!editable || isRechecking} onClick={() => onRecheck(item.id, field)} className="table-ai-button">{isRechecking ? "Checking" : "Try AI"}</button></div>
+          <div className="table-field-tools"><FieldState assessment={assessment} /><button type="button" disabled={!editable || isRechecking} onClick={() => onRecheck(item.id, field)} className="table-ai-button">{isRechecking ? "Checking" : "Lens"}</button></div>
         </div>
       )}
     </td>

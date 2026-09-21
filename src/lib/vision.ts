@@ -17,21 +17,18 @@ export interface VisionClient {
 function timeout() { const controller = new AbortController(); return { controller, timer: setTimeout(() => controller.abort(), TIMEOUT_MS) }; }
 async function compactForLens(image: Buffer) { return image.length <= 480_000 ? image : sharp(image).resize({ width: 768, height: 768, fit: "inside", withoutEnlargement: true }).jpeg({ quality: 58, mozjpeg: true }).toBuffer(); }
 
-function lensEvidence(payload: LensPayload): string[] {
+function lensCandidateCount(payload: LensPayload): number {
   return [...(payload.exact_matches ?? []), ...(payload.products_results ?? []), ...(payload.visual_matches ?? [])]
     .filter((match) => match.title)
-    .slice(0, 5)
-    .map((match) => `${match.exact_matches ? "Exact" : "Visual"} match: ${match.title}${match.source ? ` — ${match.source}` : ""}${match.link ? ` (${match.link})` : ""}`)
-    .map((text) => text.slice(0, 240));
+    .slice(0, 5).length;
 }
 
 function lensResult(payload: LensPayload, latencyMs: number, focus?: RecognitionField): TagCallResult {
-  const evidence = lensEvidence(payload);
-  const related = (payload.related_content ?? []).map((item) => item.query).filter(Boolean).slice(0, 3).join("; ");
-  const note = evidence.length ? `${evidence.join(" | ")}${related ? ` | Related: ${related}` : ""}`.slice(0, 500) : "Google Lens found no usable match candidates.";
+  const candidates = lensCandidateCount(payload);
+  const note = candidates ? "Google Lens found match candidates. Review the catalogue fields." : "Google Lens found no usable match candidates.";
   const field_confidence = Object.fromEntries(RECOGNITION_FIELDS.map((field) => [field, 0.15])) as Record<RecognitionField, number>;
   const field_evidence = Object.fromEntries(RECOGNITION_FIELDS.map((field) => [field, focus && field !== focus ? "Not rechecked in this Lens search" : note.slice(0, 240)])) as Record<RecognitionField, string>;
-  const result: TagResult = { brand: "", vehicle_model: "", part_name: "", year_start: null, year_end: null, condition_notes: note, confidence: "low", needs_review: true, field_confidence, field_evidence };
+  const result: TagResult = { brand: "", vehicle_model: "", part_name: "", year_start: null, year_end: null, condition_notes: "", confidence: "low", needs_review: true, field_confidence, field_evidence };
   return { result, model: "serpapi-google-lens", inputTokens: 0, outputTokens: 0, latencyMs };
 }
 
