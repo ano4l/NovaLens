@@ -1,216 +1,96 @@
-import { GoogleGenAI } from "@google/genai";
+import sharp from "sharp";
 import { Confidence, RecognitionContext, RecognitionField, TagCallResult, TagResult } from "./types";
 import { RECOGNITION_FIELDS } from "./recognition";
 
+const SERPAPI_IMAGE_URL = "https://serpapi.com/image";
+const SERPAPI_SEARCH_URL = "https://serpapi.com/search.json";
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
-const REQUEST_TIMEOUT_MS = 90_000;
-const CONFIDENCE_PROPERTIES = Object.fromEntries(RECOGNITION_FIELDS.map((field) => [field, { type: "number", minimum: 0, maximum: 1 }]));
-const EVIDENCE_PROPERTIES = Object.fromEntries(RECOGNITION_FIELDS.map((field) => [field, { type: "string", description: "Short visible evidence or reason for uncertainty." }]));
-const RESPONSE_SCHEMA = {
-  // STUDY: Strict structured output covers both catalogue values and the
-  // evidence needed to review them. Parsing valid JSON is not the same as
-  // trusting its contents, so normalizeResult still clamps and validates.
-  type: "object",
-  properties: {
-    brand: { type: "string", description: "Vehicle manufacturer, or empty when unknown." },
-    vehicle_model: { type: "string", description: "Vehicle model the part fits, or empty when unknown." },
-    part_name: { type: "string", description: "Specific listing-ready automotive part name." },
-    year_start: { type: ["integer", "null"], description: "Earliest compatible model year." },
-    year_end: { type: ["integer", "null"], description: "Latest compatible model year." },
-    condition_notes: { type: "string", description: "Concise visible condition notes." },
-    confidence: { type: "string", enum: ["high", "medium", "low"] },
-    needs_review: { type: "boolean" },
-    field_confidence: { type: "object", properties: CONFIDENCE_PROPERTIES, required: RECOGNITION_FIELDS, additionalProperties: false },
-    field_evidence: { type: "object", properties: EVIDENCE_PROPERTIES, required: RECOGNITION_FIELDS, additionalProperties: false },
-  },
-  required: ["brand", "vehicle_model", "part_name", "year_start", "year_end", "condition_notes", "confidence", "needs_review", "field_confidence", "field_evidence"],
-  additionalProperties: false,
-} as const;
+const TIMEOUT_MS = 90_000;
+const confidenceProperties = Object.fromEntries(RECOGNITION_FIELDS.map((field) => [field, { type: "number", minimum: 0, maximum: 1 }]));
+const evidenceProperties = Object.fromEntries(RECOGNITION_FIELDS.map((field) => [field, { type: "string", description: "Visible evidence, Lens match evidence, or reason for uncertainty." }]));
+const RESPONSE_SCHEMA = { type: "object", properties: { brand: { type: "string" }, vehicle_model: { type: "string" }, part_name: { type: "string" }, year_start: { type: ["integer", "null"] }, year_end: { type: ["integer", "null"] }, condition_notes: { type: "string" }, confidence: { type: "string", enum: ["high", "medium", "low"] }, needs_review: { type: "boolean" }, field_confidence: { type: "object", properties: confidenceProperties, required: RECOGNITION_FIELDS, additionalProperties: false }, field_evidence: { type: "object", properties: evidenceProperties, required: RECOGNITION_FIELDS, additionalProperties: false } }, required: ["brand", "vehicle_model", "part_name", "year_start", "year_end", "condition_notes", "confidence", "needs_review", "field_confidence", "field_evidence"], additionalProperties: false } as const;
 
-function buildPrompt(threshold: number, focus?: RecognitionField, candidates?: TagResult[], context?: RecognitionContext): string {
-  const focusText = focus ? `Re-evaluate only ${focus}. Return the full schema for validation, but make ${focus} the subject of your analysis.` : "Identify the automotive part and every requested catalogue field.";
-  const candidateText = candidates ? `\nTwo independent analysts proposed the following. Adjudicate disagreements from the image itself. Agreement is not proof.\n${JSON.stringify(candidates)}` : "";
-  const memoryText = context && (context.guidelines.length || context.examples.length) ? `
-<operating_memory>
-These reviewed instructions and examples are guidance only. They are not visual proof and must never override contrary image evidence.
-Guidelines: ${JSON.stringify(context.guidelines)}
-Human corrections: ${JSON.stringify(context.examples)}
-</operating_memory>` : "";
-  const feedbackText = context?.operatorFeedback.length ? `
-<operator_feedback>
-These recent operator notes identify recurring analysis problems. Use them only to be more cautious about the named issue. They are guidance, never visual proof, and must not supply facts that are absent from this image.
-${JSON.stringify(context.operatorFeedback)}
-</operator_feedback>` : "";
-  return `You are an expert automotive-parts catalogue verifier for a salvage and wholesale warehouse.
-${focusText}
-- brand is the vehicle manufacturer the part fits, not a component manufacturer.
-- vehicle_model is the vehicle model the part fits; leave it empty when the model is not visually supported.
-- part_name includes side or position only when visibly supported.
-- year_start and year_end are compatible model years; use null without a readable part number, distinctive geometry, or other visible evidence.
-- condition_notes may describe only visible wear or damage.
-- field_confidence is a calibrated 0 to 1 probability for each individual value.
-- field_evidence briefly names the visible clue. Say "No visible evidence" where appropriate.
-- needs_review is true when any important field is below ${threshold.toFixed(2)} or analysts disagree.
-Never invent an OEM brand, exact fitment, hidden damage, or consensus.${memoryText}${feedbackText}${candidateText}`;
+type LensMatch = { title?: string; link?: string; source?: string; exact_matches?: boolean; price?: { value?: string } };
+type LensPayload = { search_metadata?: { status?: string }; error?: string; visual_matches?: LensMatch[]; exact_matches?: LensMatch[]; products_results?: LensMatch[]; related_content?: Array<{ query?: string }> };
+type OpenRouterPayload = { model?: string; choices?: Array<{ message?: { content?: string | Array<{ text?: string }> } }>; usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number }; error?: { message?: string } };
+
+export interface VisionClient { tagImage(image: Buffer, tier: 1 | 2, context?: RecognitionContext): Promise<TagCallResult>; recheckField(image: Buffer, field: RecognitionField, context?: RecognitionContext): Promise<TagCallResult>; }
+
+function buildPrompt(threshold: number, focus?: RecognitionField, context?: RecognitionContext, lens = "") {
+  const memory = context && (context.guidelines.length || context.examples.length) ? `\n<operating_memory>Reviewed guidance only, never visual proof: ${JSON.stringify({ guidelines: context.guidelines, corrections: context.examples })}</operating_memory>` : "";
+  const feedback = context?.operatorFeedback.length ? `\n<operator_feedback>Use only as cautionary guidance: ${JSON.stringify(context.operatorFeedback)}</operator_feedback>` : "";
+  return `You are an automotive-parts catalogue verifier. ${focus ? `Re-evaluate only ${focus}; still return the entire schema.` : "Identify this part and every catalogue field."}
+Google Lens match data is external candidate evidence, not verified fitment. Prefer exact credible automotive matches that agree with the supplied photo; otherwise leave unsupported fields empty and set needs_review.
+brand is vehicle make; vehicle_model is vehicle model; part_name includes side/position only when supported. Years require evidence. Condition notes describe visible wear only. field_confidence is 0–1, field_evidence names the supporting clue, and needs_review is true if an important field is below ${threshold.toFixed(2)}. Never invent fitment, OEM numbers, hidden damage, or consensus.${lens}${memory}${feedback}`;
 }
 
-export interface VisionClient {
-  tagImage(image: Buffer, tier: 1 | 2, context?: RecognitionContext): Promise<TagCallResult>;
-  recheckField(image: Buffer, field: RecognitionField, context?: RecognitionContext): Promise<TagCallResult>;
+function lensContext(payload: LensPayload) {
+  const matches = [...(payload.exact_matches ?? []), ...(payload.products_results ?? []), ...(payload.visual_matches ?? [])].filter((match) => match.title).slice(0, 8).map((match) => ({ title: match.title, source: match.source, exact: Boolean(match.exact_matches), link: match.link, price: match.price?.value }));
+  return `\n<google_lens_matches>${JSON.stringify({ matches, related: (payload.related_content ?? []).map((item) => item.query).filter(Boolean).slice(0, 5) })}</google_lens_matches>`;
 }
 
-class GoogleVisionClient implements VisionClient {
-  private ai: GoogleGenAI;
-  constructor(apiKey: string, private tier1Model: string, private tier2Model: string, private threshold: number) {
-    this.ai = new GoogleGenAI({ apiKey });
-  }
-  async tagImage(image: Buffer, tier: 1 | 2, context?: RecognitionContext) {
-    return this.callModel(image, tier === 1 ? this.tier1Model : this.tier2Model, buildPrompt(this.threshold, undefined, undefined, context));
-  }
-  async recheckField(image: Buffer, field: RecognitionField, context?: RecognitionContext) {
-    return this.callModel(image, this.tier2Model, buildPrompt(this.threshold, field, undefined, context));
-  }
-  private async callModel(image: Buffer, model: string, prompt: string): Promise<TagCallResult> {
-    const started = Date.now();
-    const response = await this.ai.models.generateContent({
-      model,
-      contents: [{ role: "user", parts: [{ text: prompt }, { inlineData: { mimeType: "image/jpeg", data: image.toString("base64") } }] }],
-      config: { responseMimeType: "application/json", responseJsonSchema: RESPONSE_SCHEMA, maxOutputTokens: 1100 },
-    });
-    if (!response.text) throw new Error("Google AI returned an empty response");
-    return {
-      result: normalizeResult(JSON.parse(stripCodeFence(response.text)) as Partial<TagResult>),
-      model,
-      inputTokens: response.usageMetadata?.promptTokenCount ?? 0,
-      outputTokens: response.usageMetadata?.candidatesTokenCount ?? 0,
-      latencyMs: Date.now() - started,
-    };
-  }
+function withTimeout() { const controller = new AbortController(); return { controller, timer: setTimeout(() => controller.abort(), TIMEOUT_MS) }; }
+async function compactForLens(image: Buffer) { return image.length <= 480_000 ? image : sharp(image).resize({ width: 768, height: 768, fit: "inside", withoutEnlargement: true }).jpeg({ quality: 58, mozjpeg: true }).toBuffer(); }
+function stripCodeFence(value: string) { return value.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, ""); }
+function normalize(value: Partial<TagResult>): TagResult {
+  const confidence: Confidence = ["high", "medium", "low"].includes(String(value.confidence)) ? value.confidence as Confidence : "low";
+  const validYear = (value: unknown) => { const year = Number(value); return Number.isInteger(year) && year >= 1886 && year <= new Date().getFullYear() + 2 ? year : null; };
+  const rawStart = validYear(value.year_start); const rawEnd = validYear(value.year_end); const reverse = rawStart !== null && rawEnd !== null && rawStart > rawEnd;
+  const field_confidence = {} as Record<RecognitionField, number>; const field_evidence = {} as Record<RecognitionField, string>;
+  for (const field of RECOGNITION_FIELDS) { const score = Number(value.field_confidence?.[field]); field_confidence[field] = Number.isFinite(score) ? Math.max(0, Math.min(1, score)) : confidence === "high" ? .85 : confidence === "medium" ? .65 : .35; field_evidence[field] = String(value.field_evidence?.[field] ?? "No evidence supplied").trim().slice(0, 240); }
+  return { brand: typeof value.brand === "string" ? value.brand.trim().slice(0, 80) : "", vehicle_model: typeof value.vehicle_model === "string" ? value.vehicle_model.trim().slice(0, 80) : "", part_name: typeof value.part_name === "string" ? value.part_name.trim().slice(0, 160) : "", year_start: reverse ? rawEnd : rawStart, year_end: reverse ? rawStart : rawEnd, condition_notes: typeof value.condition_notes === "string" ? value.condition_notes.trim().slice(0, 500) : "", confidence, needs_review: Boolean(value.needs_review) || confidence === "low", field_confidence, field_evidence };
 }
 
-interface OpenRouterResponse {
-  model?: string;
-  choices?: Array<{ message?: { content?: string | Array<{ text?: string }> } }>;
-  usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number };
-  error?: { message?: string };
+class SerpApiLens {
+  constructor(private apiKey: string) {}
+  async search(image: Buffer) {
+    const compact = await compactForLens(image);
+    if (compact.length > 500_000) throw new Error("Image exceeds SerpApi Google Lens’s 500 KB upload limit");
+    const form = new FormData(); form.set("image", new Blob([new Uint8Array(compact)], { type: "image/jpeg" }), "part.jpg"); form.set("api_key", this.apiKey);
+    const started = Date.now(); const upload = await fetch(SERPAPI_IMAGE_URL, { method: "POST", body: form }); const uploaded = await upload.json() as { image_id?: string; error?: string };
+    if (!upload.ok || !uploaded.image_id) throw new Error(uploaded.error ?? "SerpApi image upload failed");
+    const url = new URL(SERPAPI_SEARCH_URL); url.search = new URLSearchParams({ engine: "google_lens", image_id: uploaded.image_id, type: "all", hl: "en", country: process.env.SERPAPI_COUNTRY ?? "za", api_key: this.apiKey }).toString();
+    const response = await fetch(url); const payload = await response.json() as LensPayload;
+    if (!response.ok || payload.error || payload.search_metadata?.status === "Error") throw new Error(payload.error ?? "Google Lens search failed");
+    return { payload, latencyMs: Date.now() - started };
+  }
 }
-type ModelCall = TagCallResult;
 
 class OpenRouterVisionClient implements VisionClient {
-  constructor(private apiKey: string, private tier1Model: string, private tier2Model: string, private challengerModel: string, private adjudicatorModel: string, private threshold: number) {}
-
-  async tagImage(image: Buffer, tier: 1 | 2, context?: RecognitionContext): Promise<TagCallResult> {
-    return this.callModel(image, tier === 1 ? this.tier1Model : this.tier2Model, buildPrompt(this.threshold, undefined, undefined, context));
-  }
-
-  async recheckField(image: Buffer, field: RecognitionField, context?: RecognitionContext): Promise<TagCallResult> {
-    return this.callModel(image, this.tier2Model, buildPrompt(this.threshold, field, undefined, context));
-  }
-
-  private async consensus(imagePath: Buffer, focus?: RecognitionField): Promise<TagCallResult> {
-    // STUDY: This is deliberation, not failover. Both analysts run even when
-    // healthy so disagreement becomes a signal. The adjudicator then receives
-    // their proposals and the same image; agreement alone is never evidence.
-    const prompt = buildPrompt(this.threshold, focus);
-    const [primary, challenger] = await Promise.all([
-      this.callModel(imagePath, this.tier2Model, prompt),
-      this.callModel(imagePath, this.challengerModel, prompt),
-    ]);
-    const judge = await this.callModel(imagePath, this.adjudicatorModel, buildPrompt(this.threshold, focus, [primary.result, challenger.result]));
-    return {
-      result: judge.result,
-      model: `${primary.model} + ${challenger.model} -> ${judge.model}`,
-      inputTokens: primary.inputTokens + challenger.inputTokens + judge.inputTokens,
-      outputTokens: primary.outputTokens + challenger.outputTokens + judge.outputTokens,
-      latencyMs: Math.max(primary.latencyMs, challenger.latencyMs) + judge.latencyMs,
-      costUsd: (primary.costUsd ?? 0) + (challenger.costUsd ?? 0) + (judge.costUsd ?? 0),
-    };
-  }
-
-  private async callModel(image: Buffer, model: string, prompt: string): Promise<ModelCall> {
-    // STUDY: All provider-specific HTTP details stay behind VisionClient. The
-    // worker and routes only receive normalized results, usage, latency, and
-    // exact cost, so a later provider swap remains localized.
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-    const started = Date.now();
+  constructor(private apiKey: string, private tier1Model: string, private tier2Model: string, private threshold: number) {}
+  async tagImage(image: Buffer, tier: 1 | 2, context?: RecognitionContext) { return this.call(image, tier === 1 ? this.tier1Model : this.tier2Model, buildPrompt(this.threshold, undefined, context)); }
+  async recheckField(image: Buffer, field: RecognitionField, context?: RecognitionContext) { return this.call(image, this.tier2Model, buildPrompt(this.threshold, field, context)); }
+  async call(image: Buffer, model: string, instructions: string): Promise<TagCallResult> {
+    const { controller, timer } = withTimeout(); const started = Date.now();
     try {
-      const response = await fetch(OPENROUTER_URL, {
-        method: "POST",
-        signal: controller.signal,
-        headers: { Authorization: `Bearer ${this.apiKey}`, "Content-Type": "application/json", "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000", "X-Title": "NovaLens" },
-        body: JSON.stringify({
-          model,
-          messages: [{ role: "user", content: [{ type: "text", text: prompt }, { type: "image_url", image_url: { url: `data:image/jpeg;base64,${image.toString("base64")}` } }] }],
-          max_tokens: 1100,
-          response_format: { type: "json_schema", json_schema: { name: "part_recognition", strict: true, schema: RESPONSE_SCHEMA } },
-          provider: { require_parameters: true, data_collection: "deny" },
-        }),
-      });
-      const payload = (await response.json()) as OpenRouterResponse;
+      const response = await fetch(OPENROUTER_URL, { method: "POST", signal: controller.signal, headers: { Authorization: `Bearer ${this.apiKey}`, "Content-Type": "application/json", "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000", "X-OpenRouter-Title": "NovaLens" }, body: JSON.stringify({ model, max_tokens: 1100, messages: [{ role: "user", content: [{ type: "text", text: instructions }, { type: "image_url", image_url: { url: `data:image/jpeg;base64,${image.toString("base64")}` } }] }], response_format: { type: "json_schema", json_schema: { name: "part_recognition", strict: true, schema: RESPONSE_SCHEMA } }, provider: { require_parameters: true, data_collection: "deny" } }) });
+      const payload = await response.json() as OpenRouterPayload;
       if (!response.ok) throw new Error(payload.error?.message ?? `OpenRouter request failed (${response.status})`);
-      const content = payload.choices?.[0]?.message?.content;
-      const text = typeof content === "string" ? content : content?.map((part) => part.text ?? "").join("");
+      const content = payload.choices?.[0]?.message?.content; const text = typeof content === "string" ? content : content?.map((part) => part.text ?? "").join("");
       if (!text) throw new Error("OpenRouter returned an empty response");
-      return { result: normalizeResult(JSON.parse(stripCodeFence(text)) as Partial<TagResult>), model: payload.model ?? model, inputTokens: payload.usage?.prompt_tokens ?? 0, outputTokens: payload.usage?.completion_tokens ?? 0, latencyMs: Date.now() - started, costUsd: payload.usage?.cost };
-    } catch (error) {
-      if (error instanceof Error && error.name === "AbortError") throw new Error(`OpenRouter timed out after ${REQUEST_TIMEOUT_MS / 1000}s`);
-      throw error;
-    } finally { clearTimeout(timeout); }
+      return { result: normalize(JSON.parse(stripCodeFence(text)) as Partial<TagResult>), model: payload.model ?? model, inputTokens: payload.usage?.prompt_tokens ?? 0, outputTokens: payload.usage?.completion_tokens ?? 0, costUsd: payload.usage?.cost, latencyMs: Date.now() - started };
+    } catch (error) { if (error instanceof Error && error.name === "AbortError") throw new Error(`OpenRouter timed out after ${TIMEOUT_MS / 1000}s`); throw error; } finally { clearTimeout(timer); }
+  }
+  async interpretLens(image: Buffer, tier: 1 | 2, field: RecognitionField | undefined, context: RecognitionContext | undefined, lens: string) { return this.call(image, tier === 1 ? this.tier1Model : this.tier2Model, buildPrompt(this.threshold, field, context, lens)); }
+}
+
+class LensFirstClient implements VisionClient {
+  constructor(private lens: SerpApiLens, private intelligence: OpenRouterVisionClient | null, private threshold: number) {}
+  async tagImage(image: Buffer, tier: 1 | 2, context?: RecognitionContext) { return this.run(image, tier, undefined, context); }
+  async recheckField(image: Buffer, field: RecognitionField, context?: RecognitionContext) { return this.run(image, 2, field, context); }
+  private async run(image: Buffer, tier: 1 | 2, field: RecognitionField | undefined, context?: RecognitionContext): Promise<TagCallResult> {
+    const { payload, latencyMs } = await this.lens.search(image); const evidence = lensContext(payload);
+    if (this.intelligence) { const call = await this.intelligence.interpretLens(image, tier, field, context, evidence); return { ...call, model: `serpapi-google-lens + ${call.model}`, latencyMs: latencyMs + call.latencyMs }; }
+    const field_confidence = Object.fromEntries(RECOGNITION_FIELDS.map((name) => [name, .15])) as Record<RecognitionField, number>; const field_evidence = Object.fromEntries(RECOGNITION_FIELDS.map((name) => [name, `Google Lens evidence is available for manual review: ${evidence}`.slice(0, 240)])) as Record<RecognitionField, string>;
+    return { result: normalize({ brand: "", vehicle_model: "", part_name: "", year_start: null, year_end: null, condition_notes: "", confidence: "low", needs_review: true, field_confidence, field_evidence }), model: "serpapi-google-lens", inputTokens: 0, outputTokens: 0, latencyMs };
   }
 }
 
-function stripCodeFence(value: string): string { return value.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, ""); }
-function normalizeYear(value: unknown): number | null {
-  if (value == null || value === "") return null;
-  const year = Number(value);
-  const maxYear = new Date().getFullYear() + 2;
-  return Number.isInteger(year) && year >= 1886 && year <= maxYear ? year : null;
-}
+class MockClient implements VisionClient { async tagImage(_image: Buffer, _tier: 1 | 2): Promise<TagCallResult> { const field_confidence = Object.fromEntries(RECOGNITION_FIELDS.map((field) => [field, 0])) as Record<RecognitionField, number>; const field_evidence = Object.fromEntries(RECOGNITION_FIELDS.map((field) => [field, "No live recognition provider is configured"])) as Record<RecognitionField, string>; return { result: normalize({ brand: "", vehicle_model: "", part_name: "", year_start: null, year_end: null, condition_notes: "", confidence: "low", needs_review: true, field_confidence, field_evidence }), model: "mock-provider", inputTokens: 0, outputTokens: 0, latencyMs: 0 }; } recheckField(image: Buffer, _field: RecognitionField) { return this.tagImage(image, 2); } }
 
-function normalizeResult(value: Partial<TagResult>): TagResult {
-  const confidence: Confidence = ["high", "medium", "low"].includes(String(value.confidence)) ? value.confidence as Confidence : "low";
-  const yearStart = normalizeYear(value.year_start);
-  const yearEnd = normalizeYear(value.year_end);
-  const invalidRange = yearStart !== null && yearEnd !== null && yearStart > yearEnd;
-  const fieldConfidence = {} as Record<RecognitionField, number>;
-  const fieldEvidence = {} as Record<RecognitionField, string>;
-  for (const field of RECOGNITION_FIELDS) {
-    const score = Number(value.field_confidence?.[field]);
-    fieldConfidence[field] = Number.isFinite(score) ? Math.max(0, Math.min(1, score)) : confidence === "high" ? 0.85 : confidence === "medium" ? 0.65 : 0.35;
-    fieldEvidence[field] = String(value.field_evidence?.[field] ?? "No evidence supplied").trim().slice(0, 240);
-  }
-  return { brand: typeof value.brand === "string" ? value.brand.trim().slice(0, 80) : "", vehicle_model: typeof value.vehicle_model === "string" ? value.vehicle_model.trim().slice(0, 80) : "", part_name: typeof value.part_name === "string" ? value.part_name.trim().slice(0, 160) : "", year_start: invalidRange ? yearEnd : yearStart, year_end: invalidRange ? yearStart : yearEnd, condition_notes: typeof value.condition_notes === "string" ? value.condition_notes.trim().slice(0, 500) : "", confidence, needs_review: Boolean(value.needs_review) || confidence === "low", field_confidence: fieldConfidence, field_evidence: fieldEvidence };
-}
-
-class MockVisionClient implements VisionClient {
-  async tagImage(_image: Buffer, tier: 1 | 2): Promise<TagCallResult> {
-    const ambiguous = tier === 1 && Math.random() < 0.12;
-    const yearStart = 2005 + Math.floor(Math.random() * 15);
-    const score = ambiguous ? 0.38 : 0.86;
-    const field_confidence = Object.fromEntries(RECOGNITION_FIELDS.map((field) => [field, score])) as Record<RecognitionField, number>;
-    const field_evidence = Object.fromEntries(RECOGNITION_FIELDS.map((field) => [field, "Mock visual evidence"])) as Record<RecognitionField, string>;
-    return { result: { brand: ambiguous ? "" : "Toyota", vehicle_model: ambiguous ? "" : "Corolla", part_name: "Front Left Headlight Assembly", year_start: ambiguous ? null : yearStart, year_end: ambiguous ? null : yearStart + 4, condition_notes: ambiguous ? "Heavy surface rust, markings illegible" : "Minor visible wear", confidence: ambiguous ? "low" : "high", needs_review: ambiguous, field_confidence, field_evidence }, model: `mock-tier${tier}`, inputTokens: 1105, outputTokens: 240, latencyMs: 20 };
-  }
-  recheckField(image: Buffer, _field: RecognitionField) { return this.tagImage(image, 2); }
-}
-
-let cached: VisionClient | null = null;
-let cachedKey = "";
-export function getVisionClient(models: { tier1: string; tier2: string; challenger?: string; adjudicator?: string; threshold: number }): { client: VisionClient; isMock: boolean } {
-  const geminiKey = process.env.GEMINI_API_KEY ?? "";
-  const openRouterKey = process.env.OPENROUTER_API_KEY ?? "";
-  const key = `${geminiKey}|${openRouterKey}|${models.tier1}|${models.tier2}|${models.threshold}`;
-  if (!cached || cachedKey !== key) {
-    if (geminiKey) {
-      cached = new GoogleVisionClient(geminiKey, models.tier1, models.tier2, models.threshold);
-    } else if (openRouterKey) {
-      const openRouterModel = (model: string) => model.startsWith("google/") ? model : `google/${model}`;
-      cached = new OpenRouterVisionClient(openRouterKey, openRouterModel(models.tier1), openRouterModel(models.tier2), openRouterModel(models.tier2), openRouterModel(models.tier2), models.threshold);
-    } else {
-      cached = new MockVisionClient();
-    }
-    cachedKey = key;
-  }
-  return { client: cached, isMock: !geminiKey && !openRouterKey };
+let cached: VisionClient | null = null; let cachedKey = "";
+export function getVisionClient(models: { tier1: string; tier2: string; threshold: number }): { client: VisionClient; isMock: boolean } {
+  const serpApiKey = process.env.SERPAPI_KEY?.trim() ?? ""; const openRouterKey = process.env.OPENROUTER_API_KEY?.trim() ?? ""; const key = `${serpApiKey}|${openRouterKey}|${models.tier1}|${models.tier2}|${models.threshold}`;
+  if (!cached || cachedKey !== key) { const intelligence = openRouterKey ? new OpenRouterVisionClient(openRouterKey, models.tier1, models.tier2, models.threshold) : null; cached = serpApiKey ? new LensFirstClient(new SerpApiLens(serpApiKey), intelligence, models.threshold) : intelligence ?? new MockClient(); cachedKey = key; }
+  return { client: cached, isMock: !serpApiKey && !openRouterKey };
 }

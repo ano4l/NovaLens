@@ -89,10 +89,8 @@ async function processItem(item: Item, alreadyClaimed = false) {
   await ensureJobProcessing(job.id);
 
   const { client, isMock } = getVisionClient({
-    tier1: await getSetting("tier1_model") ?? "gemini-3.6-flash",
-    tier2: await getSetting("tier2_model") ?? "gemini-3.6-flash",
-    challenger: await getSetting("challenger_model") ?? "qwen/qwen3-vl-235b-a22b-thinking",
-    adjudicator: await getSetting("adjudicator_model") ?? "openai/gpt-5.4-mini",
+    tier1: await getSetting("tier1_model") ?? "openai/gpt-4o",
+    tier2: await getSetting("tier2_model") ?? "anthropic/claude-sonnet-4.6",
     threshold: await numSetting("escalation_threshold", 0.8),
   });
 

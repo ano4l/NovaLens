@@ -1,32 +1,32 @@
 # NovaLens
 
-NovaLens is an enterprise automotive-parts recognition and review console. Recognition calls go directly to Google AI through the official `@google/genai` SDK, with stable `gemini-3.6-flash` handling routine recognition, escalations, and field rechecks.
+NovaLens is an enterprise automotive-parts recognition and review console. Recognition is Lens-first: each image is uploaded privately to SerpApi's Google Lens flow for live web matching, then GPT-4o or Claude Sonnet—both routed through OpenRouter—turn the returned candidates into a conservative catalogue record.
 
 ## Training mode
 
-Training mode is durable instruction-and-example learning, not provider-side fine-tuning. Active operating guidelines, a bounded set of reviewed AI-to-human corrections, and recent operator feedback are stored in Postgres and supplied as context to later Gemini calls. The context is explicitly treated as guidance rather than visual proof. Corrections made in normal production batches remain in the edit audit log and are not silently added to training memory.
+Training mode is durable instruction-and-example learning, not provider-side fine-tuning. Active operating guidelines, a bounded set of reviewed AI-to-human corrections, and recent operator feedback are stored in Postgres and supplied to the backup intelligence layer as guidance—not visual proof.
 
-Set `GEMINI_API_KEY` only in the server environment to call Google AI directly. If it is absent, NovaLens uses the existing `OPENROUTER_API_KEY` to route both tiers to the same paid Gemini models; it never falls back to `openrouter/free`. Mock results are used only when neither key is configured.
+Set `SERPAPI_KEY` in the server environment for live matching and `OPENROUTER_API_KEY` for the intelligence layer. Mock results are used only when neither is configured. Keys are never sent to the browser.
 
-Upload a folder of part photos and turn it into a manager-reviewable, export-ready catalogue. NovaLens uses direct Google AI recognition with two-tier Gemini routing so routine classifications stay efficient while uncertain items receive a stronger second pass.
+Upload a folder of part photos and turn it into a manager-reviewable, export-ready catalogue. Lens candidates are retained as field evidence, but they are never presented as verified fitment without a reviewer decision.
 
 ## Recognition strategy
 
-- Routine pass: stable `gemini-3.6-flash` handles multimodal recognition with structured output.
-- Escalation and rechecks: the same pinned `gemini-3.6-flash` model re-evaluates uncertain items with the stronger Tier 2 prompt and training context.
+- Routine pass: SerpApi uploads the normalized image and runs a live Google Lens search using the returned `image_id`.
+- Intelligence layer: GPT-4o is the default first-pass interpreter; Claude Sonnet is the default escalation/recheck interpreter. Both receive the photo and bounded Lens evidence.
 - Every field carries its own confidence, visible evidence, and review status. A reviewer can edit, confirm, or re-run only that field without overwriting trusted values.
-- When `GEMINI_API_KEY` is absent, the app uses clearly synthetic mock results so the workflow remains testable without claiming live recognition.
+- When no provider keys are configured, the app uses clearly labelled mock results and never claims a live match.
 
 ## Architecture
 
 ```text
       [Chunked Upload] -> [Image Validation] -> [Durable Postgres Images + Queue]
                                                             |
-                                             [Gemini Tier 1 model]
+                                      [SerpApi Google Lens matching]
                                                             |
                                                     needs_review?
                                                             |
-                                            [Gemini Tier 2 pass]
+                              [GPT-4o / Claude Sonnet interpretation]
                                                             |
                      [Results DB] -> [Review Workspace] -> [CSV Exports]
 ```
@@ -48,11 +48,11 @@ npm run dev
 
 Add `DATABASE_URL` using the Supabase connection string from **Connect → Database**. Keep it server-only and replace `[YOUR-PASSWORD]`; if the password contains characters such as `@`, `:`, `/`, or `#`, percent-encode them first. For Vercel, use Supabase's transaction-pooler connection on port `6543` when available to avoid exhausting direct Postgres connections. The first server request creates the required tables and indexes idempotently.
 
-Add `GEMINI_API_KEY` to `.env` for preferred direct recognition. If only `OPENROUTER_API_KEY` is configured, recognition routes the configured paid Gemini model through OpenRouter. Without either key, recognition uses clearly labelled mock tags.
+Add `SERPAPI_KEY` and `OPENROUTER_API_KEY` to `.env`. SerpApi is required for live Google Lens matching; OpenRouter routes GPT-4o and Claude Sonnet to turn match candidates into a reviewable structured record.
 
 ### Vercel environment setup
 
-In the Vercel project, add `DATABASE_URL`, `DATABASE_POOL_MAX`, and `GEMINI_API_KEY` under **Settings → Environment Variables** for **Production**. Add `OPENROUTER_API_KEY` only when the recognition fallback is needed, then redeploy. Do not commit `.env` or paste credentials into source control. These values remain server-only.
+In the Vercel project, add `DATABASE_URL`, `DATABASE_POOL_MAX`, `SERPAPI_KEY`, and `OPENROUTER_API_KEY` under **Settings → Environment Variables** for **Production**, then redeploy. Do not commit `.env` or paste credentials into source control. These values remain server-only.
 
 ## Current production boundaries
 
@@ -62,5 +62,5 @@ In the Vercel project, add `DATABASE_URL`, `DATABASE_POOL_MAX`, and `GEMINI_API_
 | Product images | Private binary rows in Supabase Postgres, served through the image route | Move high-volume catalogues to private object storage and signed URLs |
 | Queue | Atomic Supabase Postgres claims triggered within Vercel function lifetimes | Move sustained high-volume processing to a dedicated managed queue/worker |
 | Database | Supabase Postgres via `DATABASE_URL` | Add versioned migrations and connection observability |
-| Gemini recognition | Direct Google AI SDK with configurable stable models | Benchmark on a labelled parts set, calibrate thresholds, and monitor quotas |
+| Live recognition | SerpApi Google Lens with GPT-4o / Claude Sonnet interpretation | Benchmark on a labelled parts set, calibrate thresholds, and monitor provider quotas |
 | Commerce delivery | Import-ready CSV | Add scoped Shopify and WooCommerce API integrations |

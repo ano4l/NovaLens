@@ -52,8 +52,8 @@ export async function PUT(req: NextRequest) {
     if (!EDITABLE_KEYS.has(k) || typeof v !== "string") continue;
     const cleanValue = v.trim();
     if (k.endsWith("_model")) {
-      if (!/^gemini-[a-z0-9_.-]+$/i.test(cleanValue)) {
-        return NextResponse.json({ error: `${k} is not a valid Gemini model ID` }, { status: 400 });
+      if (!/^(openai\/gpt-4o|anthropic\/claude-sonnet-[a-z0-9_.-]+)$/i.test(cleanValue)) {
+        return NextResponse.json({ error: `${k} must be an approved OpenRouter GPT-4o or Claude Sonnet model ID` }, { status: 400 });
       }
     } else if (BOUNDS[k]) {
       const value = Number(cleanValue);

@@ -32,7 +32,7 @@ export default function TrainingConsole({ initialGuidelines, initialExamples }: 
         <div className="section-heading"><div><p className="eyebrow">Instruction library</p><h2>Active operating rules</h2></div><span>{guidelines.filter((g) => g.active).length} active</span></div>
         <form onSubmit={add} className="guideline-form">
           <label><span>Guideline title</span><input className="field" required maxLength={120} value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} placeholder="e.g. Conservative fitment years" /></label>
-          <label className="wide"><span>Instruction</span><textarea className="field" required maxLength={2000} value={draft.instruction} onChange={(e) => setDraft({ ...draft, instruction: e.target.value })} placeholder="Describe the exact rule Gemini should follow…" /></label>
+          <label className="wide"><span>Instruction</span><textarea className="field" required maxLength={2000} value={draft.instruction} onChange={(e) => setDraft({ ...draft, instruction: e.target.value })} placeholder="Describe the exact rule recognition should follow…" /></label>
           <label><span>Category</span><select className="field" value={draft.kind} onChange={(e) => setDraft({ ...draft, kind: e.target.value as TrainingGuidelineKind })}>{KINDS.map((kind) => <option key={kind}>{kind}</option>)}</select></label>
           <label><span>Priority</span><input className="field" type="number" min="1" max="100" value={draft.priority} onChange={(e) => setDraft({ ...draft, priority: Number(e.target.value) })} /></label>
           <button disabled={saving} className="primary-button px-4">{saving ? "Saving…" : editingId ? "Save changes" : "Add guideline"}</button>
@@ -54,7 +54,7 @@ export default function TrainingConsole({ initialGuidelines, initialExamples }: 
           {initialExamples.length === 0 ? <div className="empty-state"><strong>No corrections captured</strong><p>Edit a field in a training batch and the reviewed change will appear here.</p></div> : initialExamples.map((example) => (
             <article key={example.id} className="correction-row">
               <div className="correction-meta"><strong>{example.field.replace(/_/g, " ")}</strong><time>{new Date(example.created_at).toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "numeric" })}</time></div>
-              <div className="correction-values"><span><small>Gemini suggested</small>{example.previous_ai_value || "Empty"}</span><b aria-hidden="true">→</b><span><small>Human corrected</small>{example.corrected_value || "Empty"}</span></div>
+              <div className="correction-values"><span><small>AI suggested</small>{example.previous_ai_value || "Empty"}</span><b aria-hidden="true">→</b><span><small>Human corrected</small>{example.corrected_value || "Empty"}</span></div>
               <p>{example.job_name ?? `Batch ${example.job_id ?? "archived"}`} · {example.reviewer}</p>
             </article>
           ))}

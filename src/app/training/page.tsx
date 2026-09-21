@@ -35,7 +35,7 @@ export default async function TrainingPage() {
       <RecentFeedback feedback={feedback.rows} />
       <section className="memory-disclosure">
         <strong>How memory is used</strong>
-        <p>NovaLens sends active instructions and a bounded set of relevant human corrections to Gemini with each recognition request. They guide the model but never count as visual evidence. This is instruction-and-example learning, not provider-side fine-tuning.</p>
+        <p>NovaLens sends active instructions and a bounded set of relevant human corrections to the backup intelligence layer with each recognition request. They guide the model but never count as visual evidence. This is instruction-and-example learning, not provider-side fine-tuning.</p>
       </section>
     </div>
   );

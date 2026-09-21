@@ -230,7 +230,7 @@ export default function UploadPage() {
             <div className="flex justify-between gap-4"><dt className="text-zinc-500">AI estimate</dt><dd className="data-value text-amber-300">{estimateUnavailable ? "Unavailable" : estimate == null ? "$0.00" : `$${estimate.toFixed(2)}`}</dd></div>
           </dl>
           <div className="summary-note">
-            Recognition uses Google AI Gemini. {workflowMode === "training" ? "Reviewed field corrections become durable operating examples." : "Production edits remain audited but do not enter training memory."}
+            Recognition uses live Google Lens matches through SerpApi, with GPT-4o or Claude Sonnet as backup intelligence. {workflowMode === "training" ? "Reviewed field corrections become durable operating examples." : "Production edits remain audited but do not enter training memory."}
           </div>
         </aside>
       </div>

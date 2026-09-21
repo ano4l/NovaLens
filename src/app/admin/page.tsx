@@ -3,13 +3,14 @@
 import { useEffect, useState } from "react";
 
 const MODEL_OPTIONS = [
-  { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash", note: "Stable multimodal recognition and rechecks" },
+  { id: "openai/gpt-4o", label: "GPT-4o", note: "OpenRouter fallback intelligence for Lens matches" },
+  { id: "anthropic/claude-sonnet-4.6", label: "Claude Sonnet 4.6", note: "OpenRouter fallback intelligence for Lens matches" },
 ];
 
 const GROUPS = [
   {
     title: "Recognition routing",
-    description: "Tier 1 handles routine images. Tier 2 performs higher-quality escalations and field rechecks through Google AI.",
+    description: "Google Lens performs live web matching. These models provide the grounded fallback intelligence layer.",
     fields: [
       { key: "tier1_model", label: "Tier 1 model", kind: "model" },
       { key: "tier2_model", label: "Tier 2 model", kind: "model" },
@@ -25,7 +26,7 @@ const GROUPS = [
       { key: "tier1_output_rate", label: "Tier 1 output / 1M tokens" },
       { key: "tier2_input_rate", label: "Tier 2 input / 1M tokens" },
       { key: "tier2_output_rate", label: "Tier 2 output / 1M tokens" },
-      { key: "batch_discount", label: "Batch discount", hint: "Keep at 0 for synchronous calls; use 0.5 only when the Gemini Batch API is actually enabled." },
+      { key: "batch_discount", label: "Batch discount", hint: "Keep at 0 for synchronous calls." },
     ],
   },
   {
@@ -83,8 +84,8 @@ export default function AdminPage() {
   const applyRecommendedModel = () => {
     setSettings((current) => ({
       ...current,
-      tier1_model: "gemini-3.6-flash",
-      tier2_model: "gemini-3.6-flash",
+      tier1_model: "openai/gpt-4o",
+      tier2_model: "anthropic/claude-sonnet-4.6",
     }));
     setState("idle");
   };
@@ -106,10 +107,10 @@ export default function AdminPage() {
 
       <section className="panel p-5 sm:p-6 flex flex-col sm:flex-row gap-4 sm:items-center sm:justify-between">
         <div>
-          <h2 className="font-medium">Recommended Gemini model</h2>
-          <p className="text-sm text-zinc-500 mt-1 max-w-2xl">Direct Google AI recognition keeps the provider secret server-side and uses Gemini 3.6 Flash for routine work, escalations, and field rechecks.</p>
+          <h2 className="font-medium">Lens-first recognition</h2>
+          <p className="text-sm text-zinc-500 mt-1 max-w-2xl">SerpApi Google Lens supplies live web matches first. GPT-4o and Claude Sonnet are routed through OpenRouter to interpret those matches as grounded fallback intelligence.</p>
         </div>
-        <button type="button" onClick={applyRecommendedModel} className="secondary-button px-4 py-2.5 text-sm">Use Gemini 3.6 Flash</button>
+        <button type="button" onClick={applyRecommendedModel} className="secondary-button px-4 py-2.5 text-sm">Use Lens fallback defaults</button>
       </section>
 
       <div className="grid gap-5">
@@ -141,8 +142,8 @@ export default function AdminPage() {
 
       <div className="panel p-5 sm:p-6 flex flex-col sm:flex-row gap-4 sm:items-center sm:justify-between">
         <div>
-          <h2 className="font-medium">Google AI connection</h2>
-          <p className="text-sm text-zinc-500 mt-1">Set <code>GEMINI_API_KEY</code> in the server environment. Without it, NovaLens safely uses mock results. The key is never sent to the browser.</p>
+          <h2 className="font-medium">Recognition connections</h2>
+          <p className="text-sm text-zinc-500 mt-1">Set <code>SERPAPI_KEY</code> for live Google Lens matching and <code>OPENROUTER_API_KEY</code> for both backup models. All keys remain server-side.</p>
         </div>
         <span className="self-start sm:self-auto rounded-full border border-zinc-700 px-3 py-1 text-xs text-zinc-400">Server-side secret</span>
       </div>

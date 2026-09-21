@@ -14,12 +14,12 @@ const nav = [
 ];
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
-  const geminiConfigured = Boolean(process.env.GEMINI_API_KEY?.trim());
+  const lensConfigured = Boolean(process.env.SERPAPI_KEY?.trim());
   return <html lang="en" className={`${geist.variable} ${geistMono.variable}`}><body><div className="app-shell">
     <aside className="sidebar">
       <Link href="/" className="brand-mark"><span className="brand-symbol">N</span><span>NovaLens<small>Operations</small></span></Link>
       <nav aria-label="Primary navigation">{nav.map(([href, label, path]) => <Link href={href} key={href} className="nav-link"><svg aria-hidden="true" viewBox="0 0 24 24"><path d={path} /></svg>{label}</Link>)}</nav>
-      <div className="provider-status"><span><i className={geminiConfigured ? "" : "mock"} />{geminiConfigured ? "Recognition online" : "Recognition demo"}</span><strong>{geminiConfigured ? "Google AI" : "Mock provider"}</strong><small>{geminiConfigured ? "Gemini 2.5 models" : "Add GEMINI_API_KEY"}</small></div>
+      <div className="provider-status"><span><i className={lensConfigured ? "" : "mock"} />{lensConfigured ? "Live matching online" : "Recognition demo"}</span><strong>{lensConfigured ? "Google Lens via SerpApi" : "Mock provider"}</strong><small>{lensConfigured ? "OpenRouter: GPT-4o / Claude" : "Add SERPAPI_KEY"}</small></div>
     </aside>
     <div className="app-column">
       <header className="mobile-header"><Link href="/" className="brand-mark"><span className="brand-symbol">N</span><span>NovaLens</span></Link><span>Operations console</span></header>
