@@ -2,41 +2,18 @@
 
 import { useEffect, useState } from "react";
 
-const MODEL_OPTIONS = [
-  { id: "openai/gpt-4o", label: "GPT-4o", note: "OpenRouter fallback intelligence for Lens matches" },
-  { id: "anthropic/claude-sonnet-4.6", label: "Claude Sonnet 4.6", note: "OpenRouter fallback intelligence for Lens matches" },
-];
-
 const GROUPS = [
   {
-    title: "Recognition routing",
-    description: "Google Lens performs live web matching. These models provide the grounded fallback intelligence layer.",
+    title: "Google Lens review routing",
+    description: "Every image is matched through SerpApi Google Lens and held for human confirmation. No separate AI model is used.",
     fields: [
-      { key: "tier1_model", label: "Tier 1 model", kind: "model" },
-      { key: "tier2_model", label: "Tier 2 model", kind: "model" },
-      { key: "escalation_threshold", label: "Escalation threshold", hint: "0 to 1. Higher sends more uncertain items to Tier 2." },
       { key: "max_attempts", label: "Attempts per image", hint: "1 to 10 before manual review." },
     ],
   },
   {
-    title: "Cost model",
-    description: "These rates drive internal forecasts for Google AI recognition usage.",
+    title: "Review guardrails",
+    description: "Keep Lens candidates visible for review and flag batches that need attention.",
     fields: [
-      { key: "tier1_input_rate", label: "Tier 1 input / 1M tokens" },
-      { key: "tier1_output_rate", label: "Tier 1 output / 1M tokens" },
-      { key: "tier2_input_rate", label: "Tier 2 input / 1M tokens" },
-      { key: "tier2_output_rate", label: "Tier 2 output / 1M tokens" },
-      { key: "batch_discount", label: "Batch discount", hint: "Keep at 0 for synchronous calls." },
-    ],
-  },
-  {
-    title: "Forecasts and guardrails",
-    description: "Tune estimates and decide when a completed run needs attention.",
-    fields: [
-      { key: "est_input_tokens_per_image", label: "Input tokens / image" },
-      { key: "est_output_tokens_per_image", label: "Output tokens / image" },
-      { key: "est_escalation_rate", label: "Expected escalation rate" },
-      { key: "guardrail_margin", label: "Cost margin" },
       { key: "escalation_rate_alert_high", label: "Escalation alert threshold" },
     ],
   },
@@ -81,22 +58,13 @@ export default function AdminPage() {
     }
   };
 
-  const applyRecommendedModel = () => {
-    setSettings((current) => ({
-      ...current,
-      tier1_model: "openai/gpt-4o",
-      tier2_model: "anthropic/claude-sonnet-4.6",
-    }));
-    setState("idle");
-  };
-
   return (
     <div className="max-w-5xl mx-auto space-y-8">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-5">
         <div>
           <p className="eyebrow">System controls</p>
           <h1 className="page-title">Recognition settings</h1>
-          <p className="page-intro mt-3">Model routing, forecasts, retry policy, and safety thresholds. Changes apply to the next model call.</p>
+          <p className="page-intro mt-3">SerpApi Google Lens routing, retry policy, and review thresholds. Changes apply to the next match.</p>
         </div>
         <button onClick={save} disabled={state === "loading" || state === "saving"} className="primary-button px-5 py-2.5 disabled:opacity-50">
           {state === "saving" ? "Saving..." : state === "saved" ? "Saved" : "Save changes"}
@@ -105,12 +73,11 @@ export default function AdminPage() {
 
       {error && <div role="alert" className="rounded-lg border border-red-900 bg-red-950/30 px-4 py-3 text-sm text-red-300">{error}</div>}
 
-      <section className="panel p-5 sm:p-6 flex flex-col sm:flex-row gap-4 sm:items-center sm:justify-between">
+      <section className="panel p-5 sm:p-6">
         <div>
-          <h2 className="font-medium">Lens-first recognition</h2>
-          <p className="text-sm text-zinc-500 mt-1 max-w-2xl">SerpApi Google Lens supplies live web matches first. GPT-4o and Claude Sonnet are routed through OpenRouter to interpret those matches as grounded fallback intelligence.</p>
+          <h2 className="font-medium">Google Lens only</h2>
+          <p className="text-sm text-zinc-500 mt-1 max-w-2xl">SerpApi Google Lens is the only recognition provider. Results remain external match candidates until a reviewer confirms or edits the catalogue fields.</p>
         </div>
-        <button type="button" onClick={applyRecommendedModel} className="secondary-button px-4 py-2.5 text-sm">Use Lens fallback defaults</button>
       </section>
 
       <div className="grid gap-5">
@@ -124,14 +91,7 @@ export default function AdminPage() {
               {group.fields.map((field) => (
                 <div key={field.key}>
                   <label htmlFor={field.key} className="block text-sm text-zinc-300 mb-2">{field.label}</label>
-                  {"kind" in field && field.kind === "model" ? (
-                    <select id={field.key} value={settings[field.key] ?? ""} onChange={(event) => setSettings((current) => ({ ...current, [field.key]: event.target.value }))} className="field px-3.5 py-3">
-                      {!MODEL_OPTIONS.some((model) => model.id === settings[field.key]) && settings[field.key] && <option value={settings[field.key]}>{settings[field.key]}</option>}
-                      {MODEL_OPTIONS.map((model) => <option key={model.id} value={model.id}>{model.label} - {model.note}</option>)}
-                    </select>
-                  ) : (
-                    <input id={field.key} inputMode="decimal" value={settings[field.key] ?? ""} onChange={(event) => setSettings((current) => ({ ...current, [field.key]: event.target.value }))} className="field data-value px-3.5 py-3" />
-                  )}
+                  <input id={field.key} inputMode="decimal" value={settings[field.key] ?? ""} onChange={(event) => setSettings((current) => ({ ...current, [field.key]: event.target.value }))} className="field data-value px-3.5 py-3" />
                   {"hint" in field && field.hint && <p className="text-xs text-zinc-500 mt-2 leading-relaxed">{field.hint}</p>}
                 </div>
               ))}
@@ -143,7 +103,7 @@ export default function AdminPage() {
       <div className="panel p-5 sm:p-6 flex flex-col sm:flex-row gap-4 sm:items-center sm:justify-between">
         <div>
           <h2 className="font-medium">Recognition connections</h2>
-          <p className="text-sm text-zinc-500 mt-1">Set <code>SERPAPI_KEY</code> for live Google Lens matching and <code>OPENROUTER_API_KEY</code> for both backup models. All keys remain server-side.</p>
+          <p className="text-sm text-zinc-500 mt-1">Set <code>SERPAPI_KEY</code> for live Google Lens matching. The key remains server-side.</p>
         </div>
         <span className="self-start sm:self-auto rounded-full border border-zinc-700 px-3 py-1 text-xs text-zinc-400">Server-side secret</span>
       </div>

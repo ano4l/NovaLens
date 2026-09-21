@@ -189,7 +189,6 @@ export interface TagCallResult {
   inputTokens: number;
   outputTokens: number;
   latencyMs: number;
-  // OpenRouter may report exact charged cost. This stays optional so direct Gemini
-  // client and any future provider can fall back to the configured rate model.
+  // Providers that expose usage-based pricing can report an exact charged cost.
   costUsd?: number;
 }

@@ -4,7 +4,7 @@
 // neighbours, revokes approval, and records both API cost and any value change.
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { getSetting, numSetting } from "@/lib/settings";
+import { numSetting } from "@/lib/settings";
 import { getVisionClient } from "@/lib/vision";
 import { isRecognitionField, parseFieldAssessments } from "@/lib/recognition";
 import { Item, Job, JobMode, RecognitionField } from "@/lib/types";
@@ -29,11 +29,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (["pending", "processing", "escalated"].includes(item.status)) return NextResponse.json({ error: "Wait for the current recognition pass to finish" }, { status: 409 });
   const { rows: jobRows } = await db.query<Job>("SELECT * FROM jobs WHERE id = $1", [item.job_id]);
   const job = jobRows[0];
-  const { client, isMock } = getVisionClient({
-    tier1: await getSetting("tier1_model") ?? "openai/gpt-4o",
-    tier2: await getSetting("tier2_model") ?? "anthropic/claude-sonnet-4.6",
-    threshold: await numSetting("escalation_threshold", 0.8),
-  });
+  const { client, isMock } = getVisionClient();
 
   try {
     const storedImage = await getItemImage(item.id);

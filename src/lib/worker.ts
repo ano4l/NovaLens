@@ -6,7 +6,7 @@
 import { getDb } from "./db";
 import { getVisionClient } from "./vision";
 import { callCostUSD } from "./cost";
-import { numSetting, getSetting } from "./settings";
+import { numSetting } from "./settings";
 import { Item, Job, JobMode } from "./types";
 import { buildFieldAssessments } from "./recognition";
 import { getRecognitionContext } from "./training";
@@ -88,11 +88,7 @@ async function processItem(item: Item, alreadyClaimed = false) {
   if (!alreadyClaimed) await db.query("UPDATE items SET status = 'processing', updated_at = NOW() WHERE id = $1", [item.id]);
   await ensureJobProcessing(job.id);
 
-  const { client, isMock } = getVisionClient({
-    tier1: await getSetting("tier1_model") ?? "openai/gpt-4o",
-    tier2: await getSetting("tier2_model") ?? "anthropic/claude-sonnet-4.6",
-    threshold: await numSetting("escalation_threshold", 0.8),
-  });
+  const { client, isMock } = getVisionClient();
 
   try {
     const storedImage = await getItemImage(item.id);
@@ -105,7 +101,10 @@ async function processItem(item: Item, alreadyClaimed = false) {
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
       [item.id, item.job_id, tier, call.model, mode, call.inputTokens, call.outputTokens, cost, call.latencyMs]);
 
-    if (tier === 1 && call.result.needs_review) {
+    // Google Lens returns external match candidates, all of which require human
+    // review. A second Lens pass would repeat the same web match search, so it
+    // goes directly to the review queue rather than entering the old AI tier.
+    if (tier === 1 && call.result.needs_review && !call.model.startsWith("serpapi-google-lens")) {
       await db.query(`UPDATE items SET status = 'escalated', tier = 1, brand = $1, vehicle_model = $2, part_name = $3, year_start = $4,
         year_end = $5, condition_notes = $6, confidence = $7, needs_review = 1, raw_json = $8, field_reviews = $9,
         attempts = 0, next_retry_at = 0, updated_at = NOW() WHERE id = $10`,

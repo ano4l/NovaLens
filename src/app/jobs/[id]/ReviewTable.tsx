@@ -241,7 +241,7 @@ export default function ReviewTable({
 
   return (
     <div className="space-y-4">
-      {workflowMode === "training" && <div className="training-cue" role="note"><strong>Training batch</strong><span>When you correct a recognition field, NovaLens saves the AI-to-human change as a reusable example for future Gemini calls.</span></div>}
+      {workflowMode === "training" && <div className="training-cue" role="note"><strong>Training batch</strong><span>When you correct a recognition field, NovaLens saves the review change as a reusable operating example.</span></div>}
       <input
         ref={rephotoRef}
         type="file"
@@ -446,7 +446,7 @@ export default function ReviewTable({
               <div className="review-filename" title={activeItem.filename}>{activeItem.filename}</div>
               <div className={`image-processing-state image-processing-${activeItem.status}`}>
                 <strong>{activeItem.status === "pending" ? "Preparing image" : ["processing", "escalated"].includes(activeItem.status) ? "Analysing part" : "Image ready for identification"}</strong>
-                <span>{activeItem.status === "pending" ? "The normalized upload is queued for automotive-part analysis." : ["processing", "escalated"].includes(activeItem.status) ? "Gemini is identifying the part and assessing catalogue fields." : "The original normalized photo remains available for review and re-analysis."}</span>
+                <span>{activeItem.status === "pending" ? "The normalized upload is queued for Google Lens matching." : ["processing", "escalated"].includes(activeItem.status) ? "Google Lens is finding live web match candidates." : "The original normalized photo remains available for review and re-analysis."}</span>
               </div>
               <dl className="review-facts">
                 <InspectorField item={activeItem} field="brand" label="Brand" editing={editing} setEditing={setEditing} commitEdit={commitEdit} editable={isEditable(activeItem)} onConfirm={confirmField} onRecheck={recheckField} rechecking={rechecking} />
