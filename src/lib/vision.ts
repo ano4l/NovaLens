@@ -6,7 +6,7 @@ const SERPAPI_IMAGE_URL = "https://serpapi.com/image";
 const SERPAPI_SEARCH_URL = "https://serpapi.com/search.json";
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const TIMEOUT_MS = 90_000;
-const DEFAULT_MODEL = "openai/gpt-4o";
+const DEFAULT_MODEL = "google/gemma-4-31b-it:free";
 
 type LensMatch = { title?: string; link?: string; source?: string; exact_matches?: boolean; price?: { value?: string } };
 type LensPayload = { search_metadata?: { status?: string }; error?: string; visual_matches?: LensMatch[]; exact_matches?: LensMatch[]; products_results?: LensMatch[]; related_content?: Array<{ query?: string }> };
